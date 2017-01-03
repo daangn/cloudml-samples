@@ -61,6 +61,7 @@ import apache_beam as beam
 from apache_beam.utils.options import PipelineOptions
 from PIL import Image
 import tensorflow as tf
+import numpy as np
 
 from tensorflow.contrib.slim.python.slim.nets import inception_v3 as inception
 from tensorflow.python.framework import errors
@@ -120,7 +121,7 @@ class ExtractLabelIdsDoFn(beam.DoFn):
 
     context.aggregate_to(csv_rows_count, 1)
     uri = row[0]
-    if not uri or not uri.startswith('gs://'):
+    if not uri:
       context.aggregate_to(invalid_uri, 1)
       return
 
@@ -144,6 +145,11 @@ class ReadImageAndConvertToJpegDoFn(beam.DoFn):
 
   def process(self, context):
     uri, label_ids = context.element
+
+    cache_filepath = "%s.emb" % uri
+    if file_io.file_exists(cache_filepath):
+      yield uri, label_ids, None
+      return
 
     try:
       with file_io.FileIO(uri, mode='r') as f:
@@ -179,7 +185,7 @@ class EmbeddingsGraph(object):
     # input_jpeg is the tensor that contains raw image bytes.
     # It is used to feed image bytes and obtain embeddings.
     self.input_jpeg, self.embedding = self.build_graph()
-    self.tf_session.run(tf.initialize_all_variables())
+    self.tf_session.run(tf.global_variables_initializer())
     self.restore_from_checkpoint(Default.IMAGE_GRAPH_CHECKPOINT_URI)
 
   def build_graph(self):
@@ -294,13 +300,19 @@ class TFExampleFromImageDoFn(beam.DoFn):
       return tf.train.Feature(float_list=tf.train.FloatList(value=value))
 
     uri, label_ids, image_bytes = context.element
+    print("TFExampleFromImageDoFn: %s" % uri)
 
-    try:
-      embedding = self.preprocess_graph.calculate_embedding(image_bytes)
-    except errors.InvalidArgumentError as e:
-      context.aggregate_to(incompatible_image, 1)
-      logging.warning('Could not encode an image from %s: %s', uri, str(e))
-      return
+    cache_filepath = "%s.emb" % uri
+    if image_bytes == None:
+      embedding = np.fromstring(file_io.read_file_to_string(cache_filepath))
+    else:
+      try:
+        embedding = self.preprocess_graph.calculate_embedding(image_bytes)
+      except errors.InvalidArgumentError as e:
+        context.aggregate_to(incompatible_image, 1)
+        logging.warning('Could not encode an image from %s: %s', uri, str(e))
+        return
+      file_io.write_string_to_file(cache_filepath, embedding.tostring())
 
     if embedding.any():
       context.aggregate_to(embedding_good, 1)
@@ -390,6 +402,9 @@ def default_args(argv):
       '--runner',
       help='See Dataflow runners, may be blocking'
       ' or not, on cloud or not, etc.')
+  parser.add_argument(
+      '--checkpoint_path', type=str,
+      help='Path to the checkpoint file.')
 
   parsed_args, _ = parser.parse_known_args(argv)
 
@@ -412,6 +427,10 @@ def default_args(argv):
     default_values = {
         'runner': 'DirectPipelineRunner',
     }
+
+  if parsed_args.checkpoint_path:
+    Default.IMAGE_GRAPH_CHECKPOINT_URI = (parsed_args.checkpoint_path)
+
 
   for kk, vv in default_values.iteritems():
     if kk not in parsed_args or not vars(parsed_args)[kk]:
