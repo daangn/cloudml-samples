@@ -68,6 +68,8 @@ from tensorflow.python.framework import errors
 from tensorflow.python.lib.io import file_io
 from google.cloud.ml.io import SaveFeatures
 
+from model import BOTTLENECK_TENSOR_SIZE
+
 slim = tf.contrib.slim
 
 error_count = beam.Aggregator('errorCount')
@@ -304,7 +306,10 @@ class TFExampleFromImageDoFn(beam.DoFn):
 
     cache_filepath = "%s.emb" % uri
     if image_bytes == None:
-      embedding = np.fromstring(file_io.read_file_to_string(cache_filepath))
+      embedding = np.fromstring(
+          file_io.read_file_to_string(cache_filepath),
+          dtype=np.float32)
+      embedding = embedding.reshape((1, 1, 1, BOTTLENECK_TENSOR_SIZE))
     else:
       try:
         embedding = self.preprocess_graph.calculate_embedding(image_bytes)
