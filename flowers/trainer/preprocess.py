@@ -159,7 +159,6 @@ class ReadImageAndConvertToJpegDoFn(beam.DoFn):
         return
       except ValueError as e:
         logging.warning('Could not load an embedding file from %s: %s', cache_filepath, str(e))
-        print('Could not load an embedding file from %s: %s' % (cache_filepath, str(e)))
 
     try:
       with file_io.FileIO(uri, mode='r') as f:
@@ -310,13 +309,13 @@ class TFExampleFromImageDoFn(beam.DoFn):
       return tf.train.Feature(float_list=tf.train.FloatList(value=value))
 
     uri, label_ids, image_bytes, embedding = context.element
-    print("TFExampleFromImageDoFn: %s" % uri)
 
     try:
-      if embedding == None:
+      if embedding is None:
         embedding = self.preprocess_graph.calculate_embedding(image_bytes)
         cache_filepath = "%s.emb" % uri
         file_io.write_string_to_file(cache_filepath, embedding.tostring())
+        logging.debug("Write an embedding file to %s" % cache_filepath)
     except errors.InvalidArgumentError as e:
       context.aggregate_to(incompatible_image, 1)
       logging.warning('Could not encode an image from %s: %s', uri, str(e))
@@ -435,6 +434,7 @@ def default_args(argv):
     default_values = {
         'runner': 'DirectPipelineRunner',
     }
+    logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
 
   if parsed_args.checkpoint_path:
     Default.IMAGE_GRAPH_CHECKPOINT_URI = (parsed_args.checkpoint_path)
