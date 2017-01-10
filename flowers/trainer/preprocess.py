@@ -150,8 +150,16 @@ class ReadImageAndConvertToJpegDoFn(beam.DoFn):
 
     cache_filepath = "%s.emb" % uri
     if file_io.file_exists(cache_filepath):
-      yield uri, label_ids, None
-      return
+      try:
+        embedding = np.fromstring(
+            file_io.read_file_to_string(cache_filepath),
+            dtype=np.float32)
+        embedding = embedding.reshape((1, 1, 1, BOTTLENECK_TENSOR_SIZE))
+        yield uri, label_ids, None, embedding
+        return
+      except ValueError as e:
+        logging.warning('Could not load an embedding file from %s: %s', cache_filepath, str(e))
+        print('Could not load an embedding file from %s: %s' % (cache_filepath, str(e)))
 
     try:
       with file_io.FileIO(uri, mode='r') as f:
@@ -170,7 +178,7 @@ class ReadImageAndConvertToJpegDoFn(beam.DoFn):
     output = io.BytesIO()
     img.save(output, Default.FORMAT)
     image_bytes = output.getvalue()
-    yield uri, label_ids, image_bytes
+    yield uri, label_ids, image_bytes, None
 
 
 class EmbeddingsGraph(object):
@@ -266,7 +274,7 @@ class EmbeddingsGraph(object):
 class TFExampleFromImageDoFn(beam.DoFn):
   """Embeds image bytes and labels, stores them in tensorflow.Example.
 
-  (uri, label_ids, image_bytes) -> (tensorflow.Example).
+  (uri, label_ids, image_bytes, embedding) -> (tensorflow.Example).
 
   Output proto contains 'label', 'image_uri' and 'embedding'.
   The 'embedding' is calculated by feeding image into input layer of image
@@ -301,23 +309,18 @@ class TFExampleFromImageDoFn(beam.DoFn):
     def _float_feature(value):
       return tf.train.Feature(float_list=tf.train.FloatList(value=value))
 
-    uri, label_ids, image_bytes = context.element
+    uri, label_ids, image_bytes, embedding = context.element
     print("TFExampleFromImageDoFn: %s" % uri)
 
-    cache_filepath = "%s.emb" % uri
-    if image_bytes == None:
-      embedding = np.fromstring(
-          file_io.read_file_to_string(cache_filepath),
-          dtype=np.float32)
-      embedding = embedding.reshape((1, 1, 1, BOTTLENECK_TENSOR_SIZE))
-    else:
-      try:
+    try:
+      if embedding == None:
         embedding = self.preprocess_graph.calculate_embedding(image_bytes)
-      except errors.InvalidArgumentError as e:
-        context.aggregate_to(incompatible_image, 1)
-        logging.warning('Could not encode an image from %s: %s', uri, str(e))
-        return
-      file_io.write_string_to_file(cache_filepath, embedding.tostring())
+        cache_filepath = "%s.emb" % uri
+        file_io.write_string_to_file(cache_filepath, embedding.tostring())
+    except errors.InvalidArgumentError as e:
+      context.aggregate_to(incompatible_image, 1)
+      logging.warning('Could not encode an image from %s: %s', uri, str(e))
+      return
 
     if embedding.any():
       context.aggregate_to(embedding_good, 1)
