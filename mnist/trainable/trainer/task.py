@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-
 """Trains and Evaluates the MNIST network using a feed dictionary."""
 # pylint: disable=missing-docstring
 from __future__ import absolute_import
@@ -20,6 +19,7 @@ from __future__ import division
 from __future__ import print_function
 
 import os.path
+import subprocess
 import tempfile
 import time
 
@@ -28,7 +28,6 @@ import tensorflow as tf
 
 from tensorflow.examples.tutorials.mnist import input_data
 from tensorflow.examples.tutorials.mnist import mnist
-
 
 # Basic model parameters as external flags.
 flags = tf.app.flags
@@ -42,6 +41,14 @@ flags.DEFINE_integer('batch_size', 100, 'Batch size.  '
 flags.DEFINE_string('train_dir', 'data', 'Directory to put the training data.')
 flags.DEFINE_boolean('fake_data', False, 'If true, uses fake data '
                      'for unit testing.')
+flags.DEFINE_string('input_path', None,
+                    'The GCS path to download the train and eval files from. '
+                    'If this is not set, then they will be downloaded from '
+                    'a default HTTP address. This path must contain the files '
+                    'listed in INPUT_FILES')
+
+INPUT_FILES = ['train-images-idx3-ubyte.gz', 'train-labels-idx1-ubyte.gz',
+               't10k-images-idx3-ubyte.gz', 't10k-labels-idx1-ubyte.gz']
 
 
 def placeholder_inputs(batch_size):
@@ -114,9 +121,7 @@ def do_eval(sess,
   steps_per_epoch = data_set.num_examples // FLAGS.batch_size
   num_examples = steps_per_epoch * FLAGS.batch_size
   for step in xrange(steps_per_epoch):
-    feed_dict = fill_feed_dict(data_set,
-                               images_placeholder,
-                               labels_placeholder)
+    feed_dict = fill_feed_dict(data_set, images_placeholder, labels_placeholder)
     true_count += sess.run(eval_correct, feed_dict=feed_dict)
   precision = true_count / num_examples
   print('  Num examples: %d  Num correct: %d  Precision @ 1: %0.04f' %
@@ -126,8 +131,15 @@ def do_eval(sess,
 def run_training():
   """Train MNIST for a number of steps."""
   # Get the sets of images and labels for training, validation, and
-  # test on MNIST.
-  data_sets = input_data.read_data_sets(tempfile.mkdtemp(), FLAGS.fake_data)
+  # test on MNIST. If input_path is specified, download the data from GCS to
+  # the folder expected by read_data_sets.
+  data_dir = tempfile.mkdtemp()
+  if FLAGS.input_path:
+    files = [os.path.join(FLAGS.input_path, file_name)
+             for file_name in INPUT_FILES]
+    subprocess.check_call(['gsutil', '-m', '-q', 'cp', '-r'] + files +
+                          [data_dir])
+  data_sets = input_data.read_data_sets(data_dir, FLAGS.fake_data)
 
   # Tell TensorFlow that the model will be built into the default Graph.
   with tf.Graph().as_default():
@@ -136,9 +148,7 @@ def run_training():
         FLAGS.batch_size)
 
     # Build a Graph that computes predictions from the inference model.
-    logits = mnist.inference(images_placeholder,
-                             FLAGS.hidden1,
-                             FLAGS.hidden2)
+    logits = mnist.inference(images_placeholder, FLAGS.hidden1, FLAGS.hidden2)
 
     # Add to the Graph the Ops for loss calculation.
     loss = mnist.loss(logits, labels_placeholder)
@@ -150,14 +160,18 @@ def run_training():
     eval_correct = mnist.evaluation(logits, labels_placeholder)
 
     # Build the summary operation based on the TF collection of Summaries.
-    # TODO(b/33420312): remove the if once 0.12 is fully rolled out to prod.
-    if tf.__version__ < '0.12':
-      summary_op = tf.merge_all_summaries()
-    else:
+    # Remove this if once Tensorflow 0.12 is standard.
+    try:
       summary_op = tf.contrib.deprecated.merge_all_summaries()
+    except AttributeError:
+      summary_op = tf.merge_all_summaries()
 
     # Add the variable initializer Op.
-    init = tf.initialize_all_variables()
+    # Remove this if once Tensorflow 0.12 is standard.
+    try:
+      init = tf.global_variables_initializer()
+    except AttributeError:
+      init = tf.initialize_all_variables()
 
     # Create a saver for writing training checkpoints.
     saver = tf.train.Saver()
@@ -166,7 +180,7 @@ def run_training():
     sess = tf.Session()
 
     # Instantiate a SummaryWriter to output summaries and the Graph.
-    # TODO(b/33420312): remove the if once 0.12 is fully rolled out to prod.
+    # Remove this if once Tensorflow 0.12 is standard.
     try:
       summary_writer = tf.summary.FileWriter(FLAGS.train_dir, sess.graph)
     except AttributeError:
@@ -192,8 +206,7 @@ def run_training():
       # inspect the values of your Ops or variables, you may include them
       # in the list passed to sess.run() and the value tensors will be
       # returned in the tuple from the call.
-      _, loss_value = sess.run([train_op, loss],
-                               feed_dict=feed_dict)
+      _, loss_value = sess.run([train_op, loss], feed_dict=feed_dict)
 
       duration = time.time() - start_time
 

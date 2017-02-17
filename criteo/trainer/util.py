@@ -1,4 +1,4 @@
-# Copyright 2016 Google Inc. All Rights Reserved.
+# Copyright 2017 Google Inc. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,11 +17,11 @@
 This file is generic and can be reused by other models without modification.
 """
 
-import multiprocessing
 import os
 
 import tensorflow as tf
 from tensorflow.python.lib.io import file_io
+
 
 FINAL_MODEL_DIR = 'model'
 METADATA_FILE = 'metadata.json'
@@ -61,7 +61,7 @@ class ExportLastModelMonitor(tf.contrib.learn.monitors.ExportMonitor):
   def __init__(self,
                output_dir,
                final_model_location,
-               every_n_steps=5000,
+               every_n_steps=(45 * 1e6),
                additional_assets=None,
                input_fn=None,
                input_feature_key=None,
@@ -95,53 +95,4 @@ class ExportLastModelMonitor(tf.contrib.learn.monitors.ExportMonitor):
       assets_dir = self._final_model_location
       file_io.create_dir(assets_dir)
       _copy_all(self._additional_assets, assets_dir)
-
-
-def read_examples(input_files, batch_size, shuffle, num_epochs=None):
-  """Creates readers and queues for reading example protos."""
-  files = []
-  for e in input_files:
-    for path in e.split(','):
-      files.extend(file_io.get_matching_files(path))
-  thread_count = multiprocessing.cpu_count()
-
-  # The minimum number of instances in a queue from which examples are drawn
-  # randomly. The larger this number, the more randomness at the expense of
-  # higher memory requirements.
-  min_after_dequeue = 1000
-
-  # When batching data, the queue's capacity will be larger than the batch_size
-  # by some factor. The recommended formula is (num_threads + a small safety
-  # margin). For now, we use a single thread for reading, so this can be small.
-  queue_size_multiplier = thread_count + 3
-
-  # Convert num_epochs == 0 -> num_epochs is None, if necessary
-  num_epochs = num_epochs or None
-
-  # Build a queue of the filenames to be read.
-  filename_queue = tf.train.string_input_producer(files, num_epochs, shuffle)
-
-  options = tf.python_io.TFRecordOptions(
-      compression_type=tf.python_io.TFRecordCompressionType.GZIP)
-  example_id, encoded_example = tf.TFRecordReader(options=options).read_up_to(
-      filename_queue, batch_size)
-
-  if shuffle:
-    capacity = min_after_dequeue + queue_size_multiplier * batch_size
-    return tf.train.shuffle_batch(
-        [example_id, encoded_example],
-        batch_size,
-        capacity,
-        min_after_dequeue,
-        enqueue_many=True,
-        num_threads=thread_count)
-
-  else:
-    capacity = queue_size_multiplier * batch_size
-    return tf.train.batch(
-        [example_id, encoded_example],
-        batch_size,
-        capacity=capacity,
-        enqueue_many=True,
-        num_threads=thread_count)
 

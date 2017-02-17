@@ -77,6 +77,7 @@ class GraphReferences(object):
     self.metric_values = []
     self.keys = None
     self.predictions = []
+    self.input_jpeg = None
 
 
 class Model(object):
@@ -176,8 +177,13 @@ class Model(object):
     image = tf.image.convert_image_dtype(image, dtype=tf.float32)
 
     # Then shift images to [-1, 1) for Inception.
-    image = tf.sub(image, 0.5)
-    image = tf.mul(image, 2.0)
+    # Try-except to make the code compatible across sdk versions
+    try:
+      image = tf.subtract(image, 0.5)
+      image = tf.multiply(image, 2.0)
+    except AttributeError:
+      image = tf.sub(image, 0.5)
+      image = tf.mul(image, 2.0)
 
     # Build Inception layers, which expect A tensor of type float from [-1, 1)
     # and shape [batch_size, height, width, channels].
@@ -194,7 +200,7 @@ class Model(object):
     tensors = GraphReferences()
     is_training = graph_mod == GraphMod.TRAIN
     if data_paths:
-      _, tensors.examples = util.read_examples(
+      tensors.keys, tensors.examples = util.read_examples(
           data_paths,
           batch_size,
           shuffle=is_training,
@@ -260,7 +266,6 @@ class Model(object):
       tensors.train, tensors.global_step = training(loss_value)
     else:
       tensors.global_step = tf.Variable(0, name='global_step', trainable=False)
-      tensors.uris = uris
 
     # Add means across all batches.
     loss_updates, loss_op = util.loss(loss_value)
@@ -377,10 +382,6 @@ class Model(object):
 
     return '%s, %s' % (loss_str, accuracy_str)
 
-  def format_prediction_values(self, prediction):
-    """Formats prediction values - used for writing batch predictions as csv."""
-    return '%.3f' % (prediction[0])
-
 
 def loss(logits, labels):
   """Calculates the loss from the logits and the labels.
@@ -393,7 +394,7 @@ def loss(logits, labels):
   """
   labels = tf.to_int64(labels)
   cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(
-      logits, labels, name='xentropy')
+      logits=logits, labels=labels, name='xentropy')
   return tf.reduce_mean(cross_entropy, name='xentropy_mean')
 
 

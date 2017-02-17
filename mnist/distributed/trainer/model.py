@@ -108,13 +108,13 @@ class Model(object):
     accuracy_updates, accuracy_op = util.accuracy(logits, parsed['labels'])
 
     if not is_training:
-      # TODO(b/33420312): remove the if once 0.12 is fully rolled out to prod.
-      if tf.__version__ < '0.12':
-        tf.scalar_summary('accuracy', accuracy_op)
-        tf.scalar_summary('loss', loss_op)
-      else:
+      # Remove this if once Tensorflow 0.12 is standard.
+      try:
         tf.contrib.deprecated.scalar_summary('accuracy', accuracy_op)
         tf.contrib.deprecated.scalar_summary('loss', loss_op)
+      except AttributeError:
+        tf.scalar_summary('accuracy', accuracy_op)
+        tf.scalar_summary('loss', loss_op)
 
     tensors.metric_updates = loss_updates + accuracy_updates
     tensors.metric_values = [loss_op, accuracy_op]
@@ -137,13 +137,16 @@ class Model(object):
     with tf.Session(graph=tf.Graph()) as sess:
       # Build and save prediction meta graph and trained variable values.
       self.build_prediction_graph()
-      init_op = tf.initialize_all_variables()
+      # Remove this if once Tensorflow 0.12 is standard.
+      try:
+        init_op = tf.global_variables_initializer()
+      except AttributeError:
+        init_op = tf.initialize_all_variables()
       sess.run(init_op)
       trained_saver = tf.train.Saver()
       trained_saver.restore(sess, last_checkpoint)
       saver = tf.train.Saver()
-      saver.export_meta_graph(
-          filename=os.path.join(output_dir, 'export.meta'))
+      saver.export_meta_graph(filename=os.path.join(output_dir, 'export.meta'))
       saver.save(
           sess, os.path.join(output_dir, 'export'), write_meta_graph=False)
 
@@ -231,7 +234,7 @@ def loss(logits, labels):
   """
   labels = tf.to_int64(labels)
   cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(
-      logits, labels, name='xentropy')
+      logits=logits, labels=labels, name='xentropy')
   return tf.reduce_mean(cross_entropy, name='xentropy_mean')
 
 
