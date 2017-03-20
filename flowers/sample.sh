@@ -33,7 +33,7 @@ set -v -e
 
 # Takes about 30 mins to preprocess everything.  We serialize the two
 # preprocess.py synchronous calls just for shell scripting ease; you could use
-# --runner DataflowPipelineRunner to run them asynchronously.  Typically,
+# --runner DataflowRunner to run them asynchronously.  Typically,
 # the total worker time is higher when running on Cloud instead of your local
 # machine due to increased network traffic and the use of more cost efficient
 # CPU's.  Check progress here: https://console.cloud.google.com/dataflow
@@ -51,11 +51,12 @@ python trainer/preprocess.py \
 
 # Training on CloudML is quick after preprocessing.  If you ran the above
 # commands asynchronously, make sure they have completed before calling this one.
-gcloud beta ml jobs submit training "$JOB_ID" \
+gcloud ml-engine jobs submit training "$JOB_ID" \
   --module-name trainer.task \
   --package-path trainer \
   --staging-bucket "$BUCKET" \
   --region us-central1 \
+  --runtime_version=1.0 \
   -- \
   --output_path "${GCS_PATH}/training" \
   --eval_data_paths "${GCS_PATH}/preproc/eval*" \
