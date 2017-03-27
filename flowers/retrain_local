@@ -1,0 +1,149 @@
+#!/bin/bash
+# Copyright 2016 Google Inc. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# This sample assumes you're already setup for using CloudML.  If this is your
+# first time with the service, start here:
+# https://cloud.google.com/ml/docs/how-tos/getting-set-up
+
+# Now that we are set up, we can start processing some flowers images.
+declare -r CMD=$1
+
+if [[ $CMD == 'pre' ]]; then
+  declare -r JOB_ID="flowers_$(date +%Y%m%d_%H%M%S)"
+  echo $JOB_ID > data/job_id_cloud
+else
+  declare -r JOB_ID=$(cat data/job_id_cloud)
+fi
+
+declare -r PROJECT=$(gcloud config list project --format "value(core.project)")
+declare -r BUCKET="gs://${PROJECT}-ml"
+declare -r GCS_PATH="jobs/${JOB_ID}"
+declare -r DATA_PATH="data"
+declare -r DICT_FILE="${DATA_PATH}/dict.txt"
+declare -r CHECKPOINT_FILE="${DATA_PATH}/inception_v3_2016_08_28.ckpt"
+
+declare -r MODEL_NAME=image_classifier
+
+echo
+echo "Using job id: " $JOB_ID
+
+if [[ $CMD == 'pre' ]]; then
+  echo "Generate csv files"
+  rm -f data/train_set*.csv data/eval_set*.csv
+  python gen_csv.py
+
+  for f in `ls ${DATA_PATH}/eval_set*.csv`
+  do
+    n=`echo $f | sed "s/.*[^0-9]\([0-9]*\).csv/\1/"`
+    echo "Preprocess eval_set ${n}"
+    python trainer/preprocess.py \
+      --input_dict "$DICT_FILE" \
+      --input_path "${f}" \
+      --output_path "${GCS_PATH}/preproc/eval${n}" \
+      --checkpoint_path "$CHECKPOINT_FILE"
+  done
+
+  for f in `ls ${DATA_PATH}/train_set*.csv`
+  do
+    n=`echo $f | sed "s/.*[^0-9]\([0-9]*\).csv/\1/"`
+    echo "Preprocess train_set ${n}"
+    python trainer/preprocess.py \
+      --input_dict "$DICT_FILE" \
+      --input_path "${f}" \
+      --output_path "${GCS_PATH}/preproc/train${n}" \
+      --checkpoint_path "$CHECKPOINT_FILE"
+  done
+
+elif [[ $CMD == 'train' ]] || [[ $CMD == 'train_test' ]]; then
+  if [[ $CMD == 'train' ]]; then
+    TRAIN_PATHS="${GCS_PATH}/preproc/train*,${GCS_PATH}/preproc/eval*"
+  else
+    TRAIN_PATHS="${GCS_PATH}/preproc/train*"
+  fi
+
+  echo "Training on local is quick after preprocessing."
+  gcloud ml-engine local train \
+    --module-name trainer.task \
+    --package-path trainer \
+    -- \
+    --label_count 2 \
+    --max_steps 1000 \
+    --output_path "${GCS_PATH}/training" \
+    --eval_data_paths "${GCS_PATH}/preproc/eval*" \
+    --train_data_paths "${TRAIN_PATHS}" \
+    --inception_checkpoint_file "$CHECKPOINT_FILE"
+
+elif [[ $CMD == 'predict' ]]; then
+
+  declare -r FILEPATH=$2
+  if [[ -z $FILEPATH ]]; then
+    echo "Usage: ./retrain_local predict [image_path]"
+    exit 1
+  fi
+  python images_to_json.py -o data/request.json $2 $3 $4 $5
+  gcloud ml-engine local predict --model-dir "${GCS_PATH}/training/model" \
+    --json-instances=data/request.json
+
+elif [[ $CMD == 'predict_cloud' ]]; then
+
+  declare -r VERSION_NAME=$(cat data/version_cloud)
+  echo "Version: " $VERSION_NAME
+
+  python images_to_json.py -o data/request.json $2 $3 $4 $5
+
+  gcloud ml-engine predict --model $MODEL_NAME --version $VERSION_NAME \
+    --json-instances data/request.json
+
+elif [[ $CMD == 'publish' ]]; then
+  echo "Publish the trained model."
+
+  declare -r VERSION_NAME=$2
+  echo "Version: " $VERSION_NAME
+  echo $VERSION_NAME > data/version_cloud
+
+  gcloud ml-engine versions create "$VERSION_NAME" \
+    --model "$MODEL_NAME" \
+    --staging-bucket "$BUCKET" \
+    --origin "${GCS_PATH}/training/model"
+
+elif [[ $CMD == 'set' ]]; then
+  echo "Set default model version."
+  declare -r VERSION_NAME=$(cat data/version_cloud)
+  echo "Version: " $VERSION_NAME
+
+  # Models do not need a default version, but its a great way move your production
+  # service from one version to another with a single gcloud command.
+  gcloud ml-engine versions set-default "$VERSION_NAME" --model "$MODEL_NAME"
+
+elif [[ $CMD == 'export_emb' ]]; then
+  gcloud ml-engine local train \
+    --module-name trainer.task \
+    --package-path trainer \
+    -- \
+    --export_embeddings \
+    --output_path "${GCS_PATH}/embeddings" \
+    --inception_checkpoint_file "$CHECKPOINT_FILE"
+
+elif [[ $CMD == 'publish_emb' ]]; then
+  echo "Publish the trained model."
+  declare -r VERSION_NAME=$(cat data/version_cloud)
+  echo "Version: " $VERSION_NAME
+
+  gcloud ml-engine versions create "$VERSION_NAME" \
+    --model "$MODEL_NAME" \
+    --staging-bucket "$BUCKET" \
+    --origin "${GCS_PATH}/embeddings/model"
+
+fi
