@@ -102,7 +102,7 @@ class Default(object):
   IMAGE_GRAPH_CHECKPOINT_URI = (
       'gs://cloud-ml-data/img/flower_photos/inception_v3_2016_08_28.ckpt')
   # The latest CloudML package.
-  CML_PACKAGE = 'gs://cloud-ml/sdk/cloudml-0.1.9-alpha.tar.gz'
+  CML_PACKAGE = 'gs://cloud-ml/sdk/cloudml.latest.tar.gz'
 
 
 class ExtractLabelIdsDoFn(beam.DoFn):

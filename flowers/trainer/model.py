@@ -303,6 +303,7 @@ class Model(object):
     if not is_training:
       tf.summary.scalar('accuracy', accuracy_op)
       tf.summary.scalar('loss', loss_op)
+      tf.summary.histogram('histogram_loss', loss_op)
 
     tensors.metric_updates = loss_updates + accuracy_updates
     tensors.metric_values = [loss_op, accuracy_op]
@@ -349,6 +350,9 @@ class Model(object):
     inception_saver = tf.train.Saver(inception_vars)
     inception_saver.restore(session, inception_checkpoint_file)
 
+    if not trained_checkpoint_file:
+      return
+
     # Restore the rest of the variables from the trained checkpoint.
     trained_vars = tf.contrib.slim.get_variables_to_restore(
         exclude=inception_exclude_scopes + inception_vars.keys())
@@ -376,6 +380,24 @@ class Model(object):
 
     return inputs, outputs
 
+  def build_embeddings_graph(self):
+    tensors = self.build_graph(None, 1, GraphMod.PREDICT)
+
+    keys_placeholder = tf.placeholder(tf.string, shape=[None])
+    inputs = {
+        'key': keys_placeholder,
+        'image_bytes': tensors.input_jpeg
+    }
+
+    # To extract the id, we need to add the identity function.
+    keys = tf.identity(keys_placeholder)
+    outputs = {
+        'key': keys,
+        'embeddings': tensors.predictions[2],
+    }
+
+    return inputs, outputs
+
   def export(self, last_checkpoint, output_dir):
     """Builds a prediction graph and xports the model.
 
@@ -391,6 +413,31 @@ class Model(object):
       sess.run(init_op)
       self.restore_from_checkpoint(sess, self.inception_checkpoint_file,
                                    last_checkpoint)
+      signature_def = build_signature(inputs=inputs, outputs=outputs)
+      signature_def_map = {
+          signature_constants.DEFAULT_SERVING_SIGNATURE_DEF_KEY: signature_def
+      }
+      builder = saved_model_builder.SavedModelBuilder(output_dir)
+      builder.add_meta_graph_and_variables(
+          sess,
+          tags=[tag_constants.SERVING],
+          signature_def_map=signature_def_map)
+      builder.save()
+
+  def export_embeddings(self, output_dir):
+    """Builds a prediction graph and xports the model.
+
+    Args:
+      output_dir: Path to the folder to be used to output the model.
+    """
+    logging.info('Exporting embeddings graph to %s', output_dir)
+    with tf.Session(graph=tf.Graph()) as sess:
+      # Build and save prediction meta graph and trained variable values.
+      inputs, outputs = self.build_embeddings_graph()
+      init_op = tf.global_variables_initializer()
+      sess.run(init_op)
+      self.restore_from_checkpoint(sess, self.inception_checkpoint_file,
+                                   None)
       signature_def = build_signature(inputs=inputs, outputs=outputs)
       signature_def_map = {
           signature_constants.DEFAULT_SERVING_SIGNATURE_DEF_KEY: signature_def

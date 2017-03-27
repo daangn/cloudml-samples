@@ -356,6 +356,11 @@ def run(model, argv):
       help='If set, model is restored from latest checkpoint '
       'and predictions are written to a csv file and no training is performed.')
   parser.add_argument(
+      '--export_embeddings',
+      action='store_true',
+      default=False,
+      help='If set, model will be exported to ouput_dir.')
+  parser.add_argument(
       '--min_train_eval_rate',
       type=int,
       default=20,
@@ -432,6 +437,8 @@ def run(model, argv):
   cluster = tf.train.ClusterSpec(cluster_data) if cluster_data else None
   if args.write_predictions:
     write_predictions(args, model, cluster, task)
+  elif args.export_embeddings:
+    model.export_embeddings(model_dir(args.output_path))
   else:
     dispatch(args, model, cluster, task)
 
