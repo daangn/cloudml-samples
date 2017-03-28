@@ -19,7 +19,7 @@ import logging
 
 import tensorflow as tf
 from tensorflow.contrib import layers
-from tensorflow.contrib.slim.python.slim.nets import inception_v3 as inception
+from nets import inception_resnet_v2 as inception
 
 from tensorflow.python.saved_model import builder as saved_model_builder
 from tensorflow.python.saved_model import signature_constants
@@ -40,7 +40,7 @@ EMBEDDING_COLUMN = 'embedding'
 # Path to a default checkpoint file for the Inception graph.
 DEFAULT_INCEPTION_CHECKPOINT = (
     'gs://cloud-ml-data/img/flower_photos/inception_v3_2016_08_28.ckpt')
-BOTTLENECK_TENSOR_SIZE = 2048
+BOTTLENECK_TENSOR_SIZE = 1536
 
 
 class GraphMod():
@@ -216,12 +216,10 @@ class Model(object):
 
     # Build Inception layers, which expect A tensor of type float from [-1, 1)
     # and shape [batch_size, height, width, channels].
-    with slim.arg_scope(inception.inception_v3_arg_scope()):
-      _, end_points = inception.inception_v3(image, is_training=False)
+    with slim.arg_scope(inception.inception_resnet_v2_arg_scope()):
+      _, end_points = inception.inception_resnet_v2(image, is_training=False)
 
-    inception_embeddings = end_points['PreLogits']
-    inception_embeddings = tf.squeeze(
-        inception_embeddings, [1, 2], name='SpatialSqueeze')
+    inception_embeddings = end_points['PreLogitsFlatten']
     return image_str_tensor, inception_embeddings
 
   def build_graph(self, data_paths, batch_size, graph_mod):
@@ -331,7 +329,7 @@ class Model(object):
                                layers.
     """
     inception_exclude_scopes = [
-        'InceptionV3/AuxLogits', 'InceptionV3/Logits', 'global_step',
+        'InceptionResnetV2/AuxLogits', 'InceptionResnetV2/Logits', 'global_step',
         'final_ops'
     ]
     reader = tf.train.NewCheckpointReader(inception_checkpoint_file)

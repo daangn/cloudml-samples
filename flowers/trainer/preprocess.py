@@ -67,7 +67,7 @@ from PIL import Image
 import tensorflow as tf
 import numpy as np
 
-from tensorflow.contrib.slim.python.slim.nets import inception_v3 as inception
+from nets import inception_resnet_v2 as inception
 from tensorflow.python.framework import errors
 from tensorflow.python.lib.io import file_io
 from google.cloud.ml.io import SaveFeatures
@@ -176,6 +176,7 @@ class ReadImageAndConvertToJpegDoFn(beam.DoFn):
         return
       except ValueError as e:
         logging.warning('Could not load an embedding file from %s: %s', cache_filepath, str(e))
+        file_io.delete_file(cache_filepath)
 
     # TF will enable 'rb' in future versions, but until then, 'r' is
     # required.
@@ -263,10 +264,10 @@ class EmbeddingsGraph(object):
 
     # Build Inception layers, which expect a tensor of type float from [-1, 1)
     # and shape [batch_size, height, width, channels].
-    with slim.arg_scope(inception.inception_v3_arg_scope()):
-      _, end_points = inception.inception_v3(inception_input, is_training=False)
+    with slim.arg_scope(inception.inception_resnet_v2_arg_scope()):
+      _, end_points = inception.inception_resnet_v2(inception_input, is_training=False)
 
-    embedding = end_points['PreLogits']
+    embedding = end_points['PreLogitsFlatten']
     return input_jpeg, embedding
 
   def restore_from_checkpoint(self, checkpoint_path):
