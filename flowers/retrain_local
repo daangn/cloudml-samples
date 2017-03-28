@@ -138,7 +138,7 @@ elif [[ $CMD == 'export_emb' ]]; then
 
 elif [[ $CMD == 'publish_emb' ]]; then
   echo "Publish the trained model."
-  declare -r VERSION_NAME=$(cat data/version_cloud)
+  declare -r VERSION_NAME=$2
   echo "Version: " $VERSION_NAME
 
   gcloud ml-engine versions create "$VERSION_NAME" \
