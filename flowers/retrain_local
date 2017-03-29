@@ -128,6 +128,7 @@ elif [[ $CMD == 'set' ]]; then
   gcloud ml-engine versions set-default "$VERSION_NAME" --model "$MODEL_NAME"
 
 elif [[ $CMD == 'export_emb' ]]; then
+  rm -rf "${GCS_PATH}/embeddings"
   gcloud ml-engine local train \
     --module-name trainer.task \
     --package-path trainer \
