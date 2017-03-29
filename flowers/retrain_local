@@ -32,7 +32,7 @@ declare -r BUCKET="gs://${PROJECT}-ml"
 declare -r GCS_PATH="jobs/${JOB_ID}"
 declare -r DATA_PATH="data"
 declare -r DICT_FILE="${DATA_PATH}/dict.txt"
-declare -r CHECKPOINT_FILE="${DATA_PATH}/inception_resnet_v2_2016_08_30.ckpt"
+declare -r CHECKPOINT_FILE="${DATA_PATH}/inception_v4.ckpt"
 
 declare -r MODEL_NAME=image_classifier
 

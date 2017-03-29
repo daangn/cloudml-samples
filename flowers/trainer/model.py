@@ -19,7 +19,7 @@ import logging
 
 import tensorflow as tf
 from tensorflow.contrib import layers
-from nets import inception_resnet_v2 as inception
+from nets import inception_v4 as inception
 
 from tensorflow.python.saved_model import builder as saved_model_builder
 from tensorflow.python.saved_model import signature_constants
@@ -216,8 +216,8 @@ class Model(object):
 
     # Build Inception layers, which expect A tensor of type float from [-1, 1)
     # and shape [batch_size, height, width, channels].
-    with slim.arg_scope(inception.inception_resnet_v2_arg_scope()):
-      _, end_points = inception.inception_resnet_v2(image, is_training=False)
+    with slim.arg_scope(inception.inception_v4_arg_scope()):
+      _, end_points = inception.inception_v4(image, is_training=False)
 
     inception_embeddings = end_points['PreLogitsFlatten']
     return image_str_tensor, inception_embeddings
