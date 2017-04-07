@@ -55,7 +55,9 @@ class Evaluator(object):
     with tf.Graph().as_default() as graph:
       self.tensors = self.model.build_eval_graph(self.eval_data_paths,
                                                  self.eval_batch_size)
+
       self.summary = tf.summary.merge_all()
+
       self.saver = tf.train.Saver()
 
     self.summary_writer = tf.summary.FileWriter(self.output_path)
@@ -183,13 +185,11 @@ class Trainer(object):
         self.tensors = self.model.build_train_graph(self.args.train_data_paths,
                                                     self.args.batch_size)
 
-        # Add the variable initializer Op.
         init_op = tf.global_variables_initializer()
 
         # Create a saver for writing training checkpoints.
         self.saver = tf.train.Saver()
 
-        # Build the summary operation based on the TF collection of Summaries.
         self.summary_op = tf.summary.merge_all()
 
     # Create a "supervisor", which oversees the training process.

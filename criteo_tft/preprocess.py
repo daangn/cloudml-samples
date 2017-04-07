@@ -19,9 +19,9 @@ from __future__ import print_function
 import argparse
 import datetime
 import os
+import random
 import subprocess
 import sys
-import tempfile
 
 import criteo
 import path_constants
@@ -30,8 +30,9 @@ import apache_beam as beam
 import tensorflow as tf
 
 from tensorflow_transform import coders
+from tensorflow_transform import version as tft_version
 from tensorflow_transform.beam import impl as tft
-from tensorflow_transform.beam import io
+from tensorflow_transform.beam import tft_beam_io
 from tensorflow_transform.tf_metadata import dataset_metadata
 
 
@@ -89,6 +90,16 @@ def parse_arguments(argv):
   return args
 
 
+# TODO(b/33688220) should the transform functions take shuffle as an optional
+# argument instead?
+@beam.ptransform_fn
+def _Shuffle(pcoll):  # pylint: disable=invalid-name
+  return (pcoll
+          | 'PairWithRandom' >> beam.Map(lambda x: (random.random(), x))
+          | 'GroupByRandom' >> beam.GroupByKey()
+          | 'DropRandom' >> beam.FlatMap(lambda (k, vs): vs))
+
+
 def preprocess(pipeline, training_data, eval_data, predict_data, output_dir,
                frequency_threshold):
   """Run pre-processing step as a pipeline.
@@ -123,14 +134,10 @@ def preprocess(pipeline, training_data, eval_data, predict_data, output_dir,
 
   input_metadata = dataset_metadata.DatasetMetadata(schema=input_schema)
   _ = (input_metadata
-       | 'WriteInputMetadata' >> io.WriteMetadata(
+       | 'WriteInputMetadata' >> tft_beam_io.WriteMetadata(
            os.path.join(output_dir, path_constants.RAW_METADATA_DIR),
            pipeline=pipeline))
 
-  # TODO(b/33688220) should the transform functions take shuffle as an optional
-  # argument?
-  # TODO(b/33688275) Should the transform functions have more user friendly
-  # names?
   preprocessing_fn = criteo.make_preprocessing_fn(frequency_threshold)
   (train_dataset, train_metadata), transform_fn = (
       (train_data, input_metadata)
@@ -140,7 +147,8 @@ def preprocess(pipeline, training_data, eval_data, predict_data, output_dir,
   # WriteTransformFn writes transform_fn and metadata to fixed subdirectories
   # of output_dir, which are given by path_constants.TRANSFORM_FN_DIR and
   # path_constants.TRANSFORMED_METADATA_DIR.
-  _ = (transform_fn | 'WriteTransformFn' >> io.WriteTransformFn(output_dir))
+  _ = (transform_fn
+       | 'WriteTransformFn' >> tft_beam_io.WriteTransformFn(output_dir))
 
   # TODO(b/34231369) Remember to eventually also save the statistics.
 
@@ -151,6 +159,7 @@ def preprocess(pipeline, training_data, eval_data, predict_data, output_dir,
   train_coder = coders.ExampleProtoCoder(train_metadata.schema)
   _ = (train_dataset
        | 'SerializeTrainExamples' >> beam.Map(train_coder.encode)
+       | 'ShuffleTraining' >> _Shuffle()  # pylint: disable=no-value-for-parameter
        | 'WriteTraining'
        >> beam.io.WriteToTFRecord(
            os.path.join(output_dir,
@@ -160,6 +169,7 @@ def preprocess(pipeline, training_data, eval_data, predict_data, output_dir,
   evaluate_coder = coders.ExampleProtoCoder(evaluate_metadata.schema)
   _ = (evaluate_dataset
        | 'SerializeEvalExamples' >> beam.Map(evaluate_coder.encode)
+       | 'ShuffleEval' >> _Shuffle()  # pylint: disable=no-value-for-parameter
        | 'WriteEval'
        >> beam.io.WriteToTFRecord(
            os.path.join(output_dir,
@@ -208,10 +218,8 @@ def main(argv=None):
             os.path.join(args.output_dir, 'tmp'),
         'project':
             args.project_id,
-
-        # TODO(b/35811047) Remove once 0.1.6 is installed on the containers.
         'extra_packages': [
-            'gs://cloud-ml/sdk/tensorflow_transform-0.1.6-py2-none-any.whl',
+            tft_version.py2_installer_location,
         ],
 
         # TODO(b/35727492): Remove this.
