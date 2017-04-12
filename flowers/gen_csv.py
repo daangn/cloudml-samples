@@ -1,6 +1,14 @@
 from os import listdir
 from os.path import isfile, join
 from random import shuffle
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--data_dir',
+    default='data/flower_photos',
+    help='category images dir path (default: data/flower_photos)')
+
+args = parser.parse_args()
 
 def chunks(l, n):
 	"""Yield successive n-sized chunks from l."""
@@ -16,7 +24,7 @@ def dirs(path):
 EVAL_RATIO = 0.2
 CHUNK_SIZE = 1500
 
-root = 'data/flower_photos'
+root = args.data_dir
 categories = dirs(root)
 
 evals = []
