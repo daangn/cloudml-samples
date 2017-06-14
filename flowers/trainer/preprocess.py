@@ -89,6 +89,12 @@ from tensorflow.python.lib.io import file_io
 
 from model import BOTTLENECK_TENSOR_SIZE
 
+text_embeddings = np.genfromtxt('data/emb.csv', delimiter=',', dtype=None)
+text_embeddings_map = {}
+for item in text_embeddings:
+  text_embeddings_map[item[0]] = [float(x) for x in item[1].split(' ')]
+text_embeddings = None
+
 slim = tf.contrib.slim
 
 error_count = Metrics.counter('main', 'errorCount')
@@ -369,9 +375,16 @@ class TFExampleFromImageDoFn(beam.DoFn):
     else:
       embedding_bad.inc()
 
+    id, _ = os.path.basename(uri).split('.')
+    text_embedding = text_embeddings_map[int(id)]
+    if not text_embedding:
+      logging.info("no text embedding for id %s" % id)
+      return
+
     example = tf.train.Example(features=tf.train.Features(feature={
         'image_uri': _bytes_feature([uri]),
         'embedding': _float_feature(embedding.ravel().tolist()),
+        'text_embedding': _float_feature(text_embedding),
     }))
 
     if label_ids:

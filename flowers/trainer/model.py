@@ -107,6 +107,7 @@ class GraphReferences(object):
     self.keys = None
     self.predictions = []
     self.input_jpeg = None
+    self.input_text = None
 
 
 class Model(object):
@@ -119,6 +120,7 @@ class Model(object):
 
   def add_final_training_ops(self,
                              embeddings,
+                             text_embeddings,
                              all_labels_count,
                              bottleneck_tensor_size,
                              hidden_layer_size=BOTTLENECK_TENSOR_SIZE / 4,
@@ -142,9 +144,10 @@ class Model(object):
       logits: The logits tensor.
     """
     with tf.name_scope('input'):
+      embeddings = tf.concat([embeddings, text_embeddings], 1)
       bottleneck_input = tf.placeholder_with_default(
           embeddings,
-          shape=[None, bottleneck_tensor_size],
+          shape=[None, bottleneck_tensor_size + 10],
           name='ReshapeSqueezed')
       bottleneck_with_no_gradient = tf.stop_gradient(bottleneck_input)
 
@@ -239,6 +242,8 @@ class Model(object):
       # For training, we use pre-processed data, so it is not needed.
       embeddings = inception_embeddings
       tensors.input_jpeg = inception_input
+      tensors.input_text = tf.placeholder(tf.float32, shape=[None, 10])
+      text_embeddings = tensors.input_text
     else:
       # For training and evaluation we assume data is preprocessed, so the
       # inputs are tf-examples.
@@ -257,12 +262,16 @@ class Model(object):
                     default_value=[self.label_count]),
             'embedding':
                 tf.FixedLenFeature(
-                    shape=[BOTTLENECK_TENSOR_SIZE], dtype=tf.float32)
+                    shape=[BOTTLENECK_TENSOR_SIZE], dtype=tf.float32),
+            'text_embedding':
+                tf.FixedLenFeature(
+                    shape=[10], dtype=tf.float32)
         }
         parsed = tf.parse_example(tensors.examples, features=feature_map)
         labels = tf.squeeze(parsed['label'])
         uris = tf.squeeze(parsed['image_uri'])
         embeddings = parsed['embedding']
+        text_embeddings = parsed['text_embedding']
 
     # We assume a default label, so the total number of labels is equal to
     # label_count+1.
@@ -270,6 +279,7 @@ class Model(object):
     with tf.name_scope('final_ops'):
       softmax, logits = self.add_final_training_ops(
           embeddings,
+          text_embeddings,
           all_labels_count,
           BOTTLENECK_TENSOR_SIZE,
           dropout_keep_prob=self.dropout if is_training else None)
@@ -362,7 +372,8 @@ class Model(object):
     keys_placeholder = tf.placeholder(tf.string, shape=[None])
     inputs = {
         'key': keys_placeholder,
-        'image_bytes': tensors.input_jpeg
+        'image_bytes': tensors.input_jpeg,
+        'text_embeddings': tensors.input_text
     }
 
     # To extract the id, we need to add the identity function.

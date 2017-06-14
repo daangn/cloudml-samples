@@ -58,6 +58,8 @@ elif [[ $CMD == 'train' ]] || [[ $CMD == 'train_test' ]]; then
   echo "Training on local is quick after preprocessing."
   echo "Labels count: $LABEL_COUNT"
 
+  rm -rf "${GCS_PATH}/training"
+
   gcloud ml-engine local train \
     --module-name trainer.task \
     --package-path trainer \
@@ -130,5 +132,10 @@ elif [[ $CMD == 'publish_emb' ]]; then
     --model "$MODEL_NAME" \
     --staging-bucket "$BUCKET" \
     --origin "${GCS_PATH}/embeddings/model"
+
+else
+
+  ./retrain_local pre
+  ./retrain_local train_test
 
 fi

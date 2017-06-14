@@ -84,7 +84,8 @@ def make_request_json(input_images, output_json, do_resize):
 
       # key can be any UTF-8 string, since it goes in a HTTP request.
       row = json.dumps({'key': image_handle.name,
-                        'image_bytes': {'b64': encoded_contents}})
+                        'image_bytes': {'b64': encoded_contents},
+                        'text_embeddings': [0.5] * 10})
 
       ff.write(row)
       ff.write('\n')
