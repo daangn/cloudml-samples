@@ -40,7 +40,16 @@ EMBEDDING_COLUMN = 'embedding'
 # Path to a default checkpoint file for the Inception graph.
 DEFAULT_INCEPTION_CHECKPOINT = (
     'gs://cloud-ml-data/img/flower_photos/inception_v3_2016_08_28.ckpt')
+
+TOTAL_CATEGORIES_COUNT = 33
+MAX_PRICE = 10000000.0
+MAX_IMAGES_COUNT = 10.0
+DAY_TIME = 60.0 * 60 * 24
+
 BOTTLENECK_TENSOR_SIZE = 2048
+TEXT_EMBEDDING_SIZE = 10
+FEATURES_COUNT = 6
+EXTRA_EMBEDDING_SIZE = FEATURES_COUNT + TOTAL_CATEGORIES_COUNT
 
 
 class GraphMod():
@@ -108,7 +117,38 @@ class GraphReferences(object):
     self.predictions = []
     self.input_jpeg = None
     self.input_text = None
+    self.input_category_id = None
+    self.input_price = None
+    self.input_images_count = None
+    self.input_created_at_ts = None
+    self.input_offerable = None
 
+
+def get_extra_embeddings(tensors):
+    tensors.input_category_id = tf.placeholder(tf.int32, shape=[1])
+    tensors.input_price = tf.placeholder(tf.float32, shape=[1])
+    tensors.input_images_count = tf.placeholder(tf.float32, shape=[1])
+    tensors.input_created_at_ts = tf.placeholder(tf.float64, shape=[1])
+    tensors.input_offerable = tf.placeholder(tf.float32, shape=[1])
+
+    category_id = tensors.input_category_id
+    price = tensors.input_price
+    images_count = tensors.input_images_count
+    created_at_ts = tensors.input_created_at_ts
+    offerable = tensors.input_offerable
+
+    category = tf.one_hot(category_id - 1, TOTAL_CATEGORIES_COUNT)
+    price_norm = tf.minimum(price / MAX_PRICE, 1.0)
+    is_free = tf.cast(tf.equal(price, 0), tf.float32)
+    images_count_norm = tf.minimum(images_count / MAX_IMAGES_COUNT, 1.0)
+    created_hour = created_at_ts % DAY_TIME * 1.0 / DAY_TIME
+    created_hour = tf.cast(created_hour, tf.float32)
+    day = tf.cast(created_at_ts / DAY_TIME % 7 / 7.0, tf.float32)
+
+    extra_embeddings = tf.concat([price_norm, is_free, images_count_norm, offerable, created_hour, day], 0)
+    extra_embeddings = tf.reshape(extra_embeddings, [-1, FEATURES_COUNT])
+    extra_embeddings = tf.concat([extra_embeddings, category], 1)
+    return extra_embeddings
 
 class Model(object):
   """TensorFlow model for the flowers problem."""
@@ -121,9 +161,10 @@ class Model(object):
   def add_final_training_ops(self,
                              embeddings,
                              text_embeddings,
+                             extra_embeddings,
                              all_labels_count,
                              bottleneck_tensor_size,
-                             hidden_layer_size=BOTTLENECK_TENSOR_SIZE / 4,
+                             hidden_layer_size=(BOTTLENECK_TENSOR_SIZE + TEXT_EMBEDDING_SIZE + EXTRA_EMBEDDING_SIZE) / 4,
                              dropout_keep_prob=None):
     """Adds a new softmax and fully-connected layer for training.
 
@@ -144,10 +185,10 @@ class Model(object):
       logits: The logits tensor.
     """
     with tf.name_scope('input'):
-      embeddings = tf.concat([embeddings, text_embeddings], 1)
+      embeddings = tf.concat([embeddings, text_embeddings, extra_embeddings], 1)
       bottleneck_input = tf.placeholder_with_default(
           embeddings,
-          shape=[None, bottleneck_tensor_size + 10],
+          shape=[None, bottleneck_tensor_size],
           name='ReshapeSqueezed')
       bottleneck_with_no_gradient = tf.stop_gradient(bottleneck_input)
 
@@ -241,9 +282,11 @@ class Model(object):
       # to this graph. This is currently used only for prediction.
       # For training, we use pre-processed data, so it is not needed.
       embeddings = inception_embeddings
+      text_embeddings = tf.placeholder(tf.float32, shape=[None, TEXT_EMBEDDING_SIZE])
       tensors.input_jpeg = inception_input
-      tensors.input_text = tf.placeholder(tf.float32, shape=[None, 10])
-      text_embeddings = tensors.input_text
+      tensors.input_text = text_embeddings
+
+      extra_embeddings = get_extra_embeddings(tensors)
     else:
       # For training and evaluation we assume data is preprocessed, so the
       # inputs are tf-examples.
@@ -265,13 +308,17 @@ class Model(object):
                     shape=[BOTTLENECK_TENSOR_SIZE], dtype=tf.float32),
             'text_embedding':
                 tf.FixedLenFeature(
-                    shape=[10], dtype=tf.float32)
+                    shape=[TEXT_EMBEDDING_SIZE], dtype=tf.float32),
+            'extra_embedding':
+                tf.FixedLenFeature(
+                    shape=[EXTRA_EMBEDDING_SIZE], dtype=tf.float32),
         }
         parsed = tf.parse_example(tensors.examples, features=feature_map)
         labels = tf.squeeze(parsed['label'])
         uris = tf.squeeze(parsed['image_uri'])
         embeddings = parsed['embedding']
         text_embeddings = parsed['text_embedding']
+        extra_embeddings = parsed['extra_embedding']
 
     # We assume a default label, so the total number of labels is equal to
     # label_count+1.
@@ -280,8 +327,9 @@ class Model(object):
       softmax, logits = self.add_final_training_ops(
           embeddings,
           text_embeddings,
+          extra_embeddings,
           all_labels_count,
-          BOTTLENECK_TENSOR_SIZE,
+          BOTTLENECK_TENSOR_SIZE + TEXT_EMBEDDING_SIZE + EXTRA_EMBEDDING_SIZE,
           dropout_keep_prob=self.dropout if is_training else None)
 
     # Prediction is the index of the label with the highest score. We are
@@ -373,7 +421,12 @@ class Model(object):
     inputs = {
         'key': keys_placeholder,
         'image_bytes': tensors.input_jpeg,
-        'text_embeddings': tensors.input_text
+        'text_embedding': tensors.input_text,
+        'category_id': tensors.input_category_id,
+        'price': tensors.input_price,
+        'images_count': tensors.input_images_count,
+        'created_at_ts': tensors.input_created_at_ts,
+        'offerable': tensors.input_offerable,
     }
 
     # To extract the id, we need to add the identity function.

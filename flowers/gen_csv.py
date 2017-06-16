@@ -22,7 +22,7 @@ def dirs(path):
   return [f for f in listdir(path) if not isfile(join(path, f))]
 
 EVAL_RATIO = 0.2
-CHUNK_SIZE = 1500
+CHUNK_SIZE = 3500
 
 root = args.data_dir
 categories = dirs(root)

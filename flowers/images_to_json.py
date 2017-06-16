@@ -83,9 +83,16 @@ def make_request_json(input_images, output_json, do_resize):
       encoded_contents = base64.b64encode(resized_handle.getvalue())
 
       # key can be any UTF-8 string, since it goes in a HTTP request.
-      row = json.dumps({'key': image_handle.name,
-                        'image_bytes': {'b64': encoded_contents},
-                        'text_embeddings': [0.5] * 10})
+      row = json.dumps({
+        'key': image_handle.name,
+        'image_bytes': {'b64': encoded_contents},
+        'text_embedding': [0.5] * 10,
+        'category_id': 4,
+        'price': 99000,
+        'images_count': 3,
+        'created_at_ts': 1497508479,
+        'offerable': 1,
+        })
 
       ff.write(row)
       ff.write('\n')

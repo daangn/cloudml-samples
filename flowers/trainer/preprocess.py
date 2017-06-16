@@ -87,13 +87,41 @@ from tensorflow.contrib.slim.python.slim.nets import inception_v3 as inception
 from tensorflow.python.framework import errors
 from tensorflow.python.lib.io import file_io
 
-from model import BOTTLENECK_TENSOR_SIZE
+from model import BOTTLENECK_TENSOR_SIZE, TOTAL_CATEGORIES_COUNT, \
+    MAX_PRICE, MAX_IMAGES_COUNT, DAY_TIME
 
-text_embeddings = np.genfromtxt('data/emb.csv', delimiter=',', dtype=None)
-text_embeddings_map = {}
-for item in text_embeddings:
-  text_embeddings_map[item[0]] = [float(x) for x in item[1].split(' ')]
-text_embeddings = None
+from model import get_extra_embeddings, GraphReferences
+sess = tf.Session()
+tensors = GraphReferences()
+extra_embeddings = get_extra_embeddings(tensors)
+data_map = {}
+
+# columns: id, text_embedding, category_id, price, images_count,
+#          created_at_ts, offerable
+items = np.genfromtxt('data/emb.csv', delimiter=',', dtype=None)
+for item in items:
+  key = item[0]
+  text_embedding = [float(x) for x in item[1].rstrip().split(' ')]
+  category_id = item[2]
+  price = item[3]
+  images_count = item[4]
+  created_at_ts = item[5]
+  offerable = item[6]
+
+  extra_embedding = sess.run(extra_embeddings, feed_dict={
+        tensors.input_price: [price],
+        tensors.input_images_count: [images_count],
+        tensors.input_offerable: [offerable],
+        tensors.input_created_at_ts: [created_at_ts],
+        tensors.input_category_id: [category_id],
+        })[0]
+
+  data_map[key] = {
+      'text_embedding': text_embedding,
+      'extra_embedding': list(extra_embedding),
+      }
+items = None
+sess.close()
 
 slim = tf.contrib.slim
 
@@ -353,6 +381,9 @@ class TFExampleFromImageDoFn(beam.DoFn):
     def _float_feature(value):
       return tf.train.Feature(float_list=tf.train.FloatList(value=value))
 
+    def _int_feature(value):
+      return tf.train.Feature(float_list=tf.train.Int64List(value=value))
+
     try:
       element = element.element
     except AttributeError:
@@ -376,15 +407,16 @@ class TFExampleFromImageDoFn(beam.DoFn):
       embedding_bad.inc()
 
     id, _ = os.path.basename(uri).split('.')
-    text_embedding = text_embeddings_map[int(id)]
-    if not text_embedding:
-      logging.info("no text embedding for id %s" % id)
+    data = data_map[int(id)]
+    if not data:
+      logging.info("no data for id %s" % id)
       return
 
     example = tf.train.Example(features=tf.train.Features(feature={
         'image_uri': _bytes_feature([uri]),
         'embedding': _float_feature(embedding.ravel().tolist()),
-        'text_embedding': _float_feature(text_embedding),
+        'text_embedding': _float_feature(data['text_embedding']),
+        'extra_embedding': _float_feature(data['extra_embedding']),
     }))
 
     if label_ids:
