@@ -48,7 +48,7 @@ DAY_TIME = 60.0 * 60 * 24
 
 BOTTLENECK_TENSOR_SIZE = 2048
 TEXT_EMBEDDING_SIZE = 10
-FEATURES_COUNT = 6
+FEATURES_COUNT = 8
 EXTRA_EMBEDDING_SIZE = FEATURES_COUNT + TOTAL_CATEGORIES_COUNT
 
 
@@ -140,12 +140,14 @@ def get_extra_embeddings(tensors):
     category = tf.one_hot(category_id - 1, TOTAL_CATEGORIES_COUNT)
     price_norm = tf.minimum(price / MAX_PRICE, 1.0)
     is_free = tf.cast(tf.equal(price, 0), tf.float32)
+    price_over_10 = tf.cast(tf.greater_equal(price, 100000), tf.float32)
+    high_price = tf.minimum(price / MAX_PRICE / 1000, 1.0)
     images_count_norm = tf.minimum(images_count / MAX_IMAGES_COUNT, 1.0)
     created_hour = created_at_ts % DAY_TIME * 1.0 / DAY_TIME
     created_hour = tf.cast(created_hour, tf.float32)
     day = tf.cast(created_at_ts / DAY_TIME % 7 / 7.0, tf.float32)
 
-    extra_embeddings = tf.concat([price_norm, is_free, images_count_norm, offerable, created_hour, day], 0)
+    extra_embeddings = tf.concat([price_norm, is_free, price_over_10, high_price, images_count_norm, offerable, created_hour, day], 0)
     extra_embeddings = tf.reshape(extra_embeddings, [-1, FEATURES_COUNT])
     extra_embeddings = tf.concat([extra_embeddings, category], 1)
     return extra_embeddings

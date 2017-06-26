@@ -87,8 +87,7 @@ from tensorflow.contrib.slim.python.slim.nets import inception_v3 as inception
 from tensorflow.python.framework import errors
 from tensorflow.python.lib.io import file_io
 
-from model import BOTTLENECK_TENSOR_SIZE, TOTAL_CATEGORIES_COUNT, \
-    MAX_PRICE, MAX_IMAGES_COUNT, DAY_TIME
+from model import BOTTLENECK_TENSOR_SIZE
 
 from model import get_extra_embeddings, GraphReferences
 sess = tf.Session()
