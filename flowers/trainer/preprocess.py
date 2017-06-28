@@ -87,40 +87,47 @@ from tensorflow.contrib.slim.python.slim.nets import inception_v3 as inception
 from tensorflow.python.framework import errors
 from tensorflow.python.lib.io import file_io
 
-from model import BOTTLENECK_TENSOR_SIZE
+try:
+  from model import BOTTLENECK_TENSOR_SIZE
+  from model import get_extra_embeddings, GraphReferences
+except ImportError:
+  from trainer.model import BOTTLENECK_TENSOR_SIZE
+  from trainer.model import get_extra_embeddings, GraphReferences
 
-from model import get_extra_embeddings, GraphReferences
-sess = tf.Session()
-tensors = GraphReferences()
-extra_embeddings = get_extra_embeddings(tensors)
 data_map = {}
 
-# columns: id, text_embedding, category_id, price, images_count,
-#          created_at_ts, offerable
-items = np.genfromtxt('data/emb.csv', delimiter=',', dtype=None)
-for item in items:
-  key = item[0]
-  text_embedding = [float(x) for x in item[1].rstrip().split(' ')]
-  category_id = item[2]
-  price = item[3]
-  images_count = item[4]
-  created_at_ts = item[5]
-  offerable = item[6]
+def load_text_data(data_path):
+  sess = tf.Session()
+  tensors = GraphReferences()
+  extra_embeddings = get_extra_embeddings(tensors)
 
-  extra_embedding = sess.run(extra_embeddings, feed_dict={
-        tensors.input_price: [price],
-        tensors.input_images_count: [images_count],
-        tensors.input_offerable: [offerable],
-        tensors.input_created_at_ts: [created_at_ts],
-        tensors.input_category_id: [category_id],
-        })[0]
+  # columns: id, text_embedding, category_id, price, images_count,
+  #          created_at_ts, offerable
+  items = np.genfromtxt(file_io.FileIO(data_path, mode='r'),
+      delimiter=',', dtype=None)
+  for item in items:
+    key = item[0]
+    text_embedding = [float(x) for x in item[1].rstrip().split(' ')]
+    category_id = item[2]
+    price = item[3]
+    images_count = item[4]
+    created_at_ts = item[5]
+    offerable = item[6]
 
-  data_map[key] = {
-      'text_embedding': text_embedding,
-      'extra_embedding': list(extra_embedding),
-      }
-items = None
-sess.close()
+    extra_embedding = sess.run(extra_embeddings, feed_dict={
+          tensors.input_price: [price],
+          tensors.input_images_count: [images_count],
+          tensors.input_offerable: [offerable],
+          tensors.input_created_at_ts: [created_at_ts],
+          tensors.input_category_id: [category_id],
+          })[0]
+
+    data_map[key] = {
+        'text_embedding': text_embedding,
+        'extra_embedding': list(extra_embedding),
+        }
+  items = None
+  sess.close()
 
 slim = tf.contrib.slim
 
@@ -427,6 +434,8 @@ class TFExampleFromImageDoFn(beam.DoFn):
 
 def configure_pipeline(p, opt):
   """Specify PCollection and transformations in pipeline."""
+  load_text_data(opt.text_data_path)
+
   read_input_source = beam.io.ReadFromText(
       opt.input_path, strip_trailing_newlines=True)
   read_label_source = beam.io.ReadFromText(
@@ -486,8 +495,8 @@ def default_args(argv):
       type=str,
       default='flowers-' + datetime.datetime.now().strftime('%Y%m%d-%H%M%S'),
       help='A unique job identifier.')
-  parser.add_argument(
-      '--num_workers', default=20, type=int, help='The number of workers.')
+#  parser.add_argument(
+#      '--num_workers', default=2, type=int, help='The number of workers.')
   parser.add_argument('--cloud', default=False, action='store_true')
   parser.add_argument(
       '--runner',
@@ -496,6 +505,12 @@ def default_args(argv):
   parser.add_argument(
       '--checkpoint_path', type=str,
       help='Path to the checkpoint file.')
+  parser.add_argument(
+      '--text_data_path', type=str,
+      help='Path to the text data file.')
+  parser.add_argument(
+      '--extra_package', default='./dist/trainer-0.1.1.tar.gz', type=str,
+      help='Path to the extra package path.')
 
   parsed_args, _ = parser.parse_known_args(argv)
 
@@ -511,6 +526,7 @@ def default_args(argv):
         'save_main_session':
             True,
     }
+    logging.basicConfig(stream=sys.stdout, level=logging.INFO)
   else:
     # Flags which need to be set for local runs.
     default_values = {

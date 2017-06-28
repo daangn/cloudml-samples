@@ -33,6 +33,7 @@ if [[ $CMD == 'pre' ]]; then
       --input_dict "$DICT_FILE" \
       --input_path "${f}" \
       --output_path "${GCS_PATH}/preproc/eval${n}" \
+      --text_data_path "${DATA_PATH}/emb.csv" \
       --checkpoint_path "$CHECKPOINT_FILE"
   done
 
@@ -44,6 +45,7 @@ if [[ $CMD == 'pre' ]]; then
       --input_dict "$DICT_FILE" \
       --input_path "${f}" \
       --output_path "${GCS_PATH}/preproc/train${n}" \
+      --text_data_path "${DATA_PATH}/emb.csv" \
       --checkpoint_path "$CHECKPOINT_FILE"
   done
 
