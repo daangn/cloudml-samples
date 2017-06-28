@@ -94,40 +94,6 @@ except ImportError:
   from trainer.model import BOTTLENECK_TENSOR_SIZE
   from trainer.model import get_extra_embeddings, GraphReferences
 
-data_map = {}
-
-def load_text_data(data_path):
-  sess = tf.Session()
-  tensors = GraphReferences()
-  extra_embeddings = get_extra_embeddings(tensors)
-
-  # columns: id, text_embedding, category_id, price, images_count,
-  #          created_at_ts, offerable
-  items = np.genfromtxt(file_io.FileIO(data_path, mode='r'),
-      delimiter=',', dtype=None)
-  for item in items:
-    key = item[0]
-    text_embedding = [float(x) for x in item[1].rstrip().split(' ')]
-    category_id = item[2]
-    price = item[3]
-    images_count = item[4]
-    created_at_ts = item[5]
-    offerable = item[6]
-
-    extra_embedding = sess.run(extra_embeddings, feed_dict={
-          tensors.input_price: [price],
-          tensors.input_images_count: [images_count],
-          tensors.input_offerable: [offerable],
-          tensors.input_created_at_ts: [created_at_ts],
-          tensors.input_category_id: [category_id],
-          })[0]
-
-    data_map[key] = {
-        'text_embedding': text_embedding,
-        'extra_embedding': list(extra_embedding),
-        }
-  items = None
-  sess.close()
 
 slim = tf.contrib.slim
 
@@ -156,6 +122,46 @@ class Default(object):
   # https://research.googleblog.com/2016/08/improving-inception-and-image.html
   IMAGE_GRAPH_CHECKPOINT_URI = (
       'gs://cloud-ml-data/img/flower_photos/inception_v3_2016_08_28.ckpt')
+
+
+class ExtractTextDataDoFn(beam.DoFn):
+  def __init__(self):
+    self.sess = None
+    self.tensors = None
+    self.extra_embeddings = None
+
+  def start_bundle(self, context=None):
+    if not self.sess:
+      self.sess = tf.Session()
+      self.tensors = GraphReferences()
+      self.extra_embeddings = get_extra_embeddings(self.tensors)
+
+  def process(self, item):
+    key = item[0]
+    try:
+      text_embedding = [float(x) for x in item[1].rstrip().split(' ')]
+    except ValueError as e:
+      logging.error("%s", item)
+      raise e
+
+    category_id = item[2]
+    price = item[3]
+    images_count = item[4]
+    created_at_ts = item[5]
+    offerable = item[6]
+
+    extra_embedding = self.sess.run(self.extra_embeddings, feed_dict={
+          self.tensors.input_price: [price],
+          self.tensors.input_images_count: [images_count],
+          self.tensors.input_offerable: [offerable],
+          self.tensors.input_created_at_ts: [created_at_ts],
+          self.tensors.input_category_id: [category_id],
+          })[0]
+
+    yield key, {
+          'text_embedding': text_embedding,
+          'extra_embedding': list(extra_embedding),
+          }
 
 
 class ExtractLabelIdsDoFn(beam.DoFn):
@@ -379,7 +385,9 @@ class TFExampleFromImageDoFn(beam.DoFn):
       with self.graph.as_default():
         self.preprocess_graph = EmbeddingsGraph(self.tf_session)
 
-  def process(self, element):
+    self.data_map = {}
+
+  def process(self, element, all_text_data):
 
     def _bytes_feature(value):
       return tf.train.Feature(bytes_list=tf.train.BytesList(value=value))
@@ -395,6 +403,10 @@ class TFExampleFromImageDoFn(beam.DoFn):
     except AttributeError:
       pass
     uri, label_ids, image_bytes, embedding = element
+
+    if not self.data_map:
+      for i, item in enumerate(all_text_data):
+        self.data_map[int(item[0])] = item[1]
 
     try:
       if embedding is None:
@@ -413,10 +425,9 @@ class TFExampleFromImageDoFn(beam.DoFn):
       embedding_bad.inc()
 
     id, _ = os.path.basename(uri).split('.')
-    data = data_map[int(id)]
+    data = self.data_map[int(id)]
     if not data:
-      logging.info("no data for id %s" % id)
-      return
+      raise ("no data for id %s" % id)
 
     example = tf.train.Example(features=tf.train.Features(feature={
         'image_uri': _bytes_feature([uri]),
@@ -434,13 +445,17 @@ class TFExampleFromImageDoFn(beam.DoFn):
 
 def configure_pipeline(p, opt):
   """Specify PCollection and transformations in pipeline."""
-  load_text_data(opt.text_data_path)
-
   read_input_source = beam.io.ReadFromText(
       opt.input_path, strip_trailing_newlines=True)
   read_label_source = beam.io.ReadFromText(
       opt.input_dict, strip_trailing_newlines=True)
+  read_text_data_source = beam.io.ReadFromText(
+      opt.text_data_path, strip_trailing_newlines=True, skip_header_lines=1)
   labels = (p | 'Read dictionary' >> read_label_source)
+  text_data = (p
+      | 'Read text data' >> read_text_data_source
+      | 'Parse text data' >> beam.Map(lambda line: csv.reader([line]).next())
+      | 'Extract text data' >> beam.ParDo(ExtractTextDataDoFn()))
   _ = (p
        | 'Read input' >> read_input_source
        | 'Parse input' >> beam.Map(lambda line: csv.reader([line]).next())
@@ -448,7 +463,8 @@ def configure_pipeline(p, opt):
                                            beam.pvalue.AsIter(labels))
        | 'Read and convert to JPEG'
        >> beam.ParDo(ReadImageAndConvertToJpegDoFn())
-       | 'Embed and make TFExample' >> beam.ParDo(TFExampleFromImageDoFn())
+       | 'Embed and make TFExample' >> beam.ParDo(TFExampleFromImageDoFn(),
+                                           beam.pvalue.AsIter(text_data))
        # TODO(b/35133536): Get rid of this Map and instead use
        # coder=beam.coders.ProtoCoder(tf.train.Example) in WriteToTFRecord
        # below.
