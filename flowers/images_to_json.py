@@ -68,9 +68,34 @@ def make_request_json(input_images, output_json, do_resize):
     do_resize: Boolean specifying if script should resize images.
   """
 
+  from tensorflow.python.lib.io import file_io
+  import numpy as np
+
+  data_path = 'data/emb.csv'
+  items = np.genfromtxt(file_io.FileIO(data_path, mode='r'),
+      delimiter=',', dtype=None, skip_header=1)
+  data_map = {}
+  for item in items:
+    key = item[0]
+    text_embedding = [float(x) for x in item[1].rstrip().split(' ')]
+    data_map[key] = {
+        'key': str(key),
+        'text_embedding': text_embedding,
+        'category_id': item[2],
+        'price': item[3],
+        'images_count': item[4],
+        'created_at_ts': item[5],
+        'offerable': item[6],
+        }
+
   with open(output_json, 'w') as ff:
     for image_handle in input_images:
       # Uses argparse to check permissions, but ignore pre-opened file handle.
+      tokens = image_handle.name.split('/')
+      tokens = tokens[-1].split('.')
+      id = int(tokens[0])
+      data = data_map[id]
+
       image = Image.open(image_handle.name)
       image_handle.close()
       resized_handle = StringIO()
@@ -83,16 +108,9 @@ def make_request_json(input_images, output_json, do_resize):
       encoded_contents = base64.b64encode(resized_handle.getvalue())
 
       # key can be any UTF-8 string, since it goes in a HTTP request.
-      row = json.dumps({
-        'key': image_handle.name,
-        'image_bytes': {'b64': encoded_contents},
-        'text_embedding': [0.5] * 10,
-        'category_id': 4,
-        'price': 99000,
-        'images_count': 3,
-        'created_at_ts': 1497508479,
-        'offerable': 1,
-        })
+      new_data = {'image_bytes': {'b64': encoded_contents}}
+      new_data.update(data)
+      row = json.dumps(new_data)
 
       ff.write(row)
       ff.write('\n')
