@@ -57,7 +57,7 @@ def parse_arguments(argv):
   parser.add_argument(
       '--frequency_threshold',
       type=int,
-      default=50,
+      default=10,
       help=
       'The frequency threshold below which categorical values are ignored.')
   parser.add_argument(
@@ -72,7 +72,6 @@ def parse_arguments(argv):
       '--predict_data', help='Data to encode as prediction features.')
   parser.add_argument(
       '--output_dir',
-      default=None,
       required=True,
       help=('Google Cloud Storage or Local directory in which '
             'to place outputs.'))
