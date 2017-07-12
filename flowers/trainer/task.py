@@ -71,7 +71,12 @@ class Evaluator(object):
     last_checkpoint = tf.train.latest_checkpoint(self.checkpoint_path)
     with self.sv.managed_session(
         master='', start_standard_services=False) as session:
-      self.sv.saver.restore(session, last_checkpoint)
+      try:
+        self.sv.saver.restore(session, last_checkpoint)
+      except Exception:
+        print("sleep")
+        time.sleep(1)
+        self.sv.saver.restore(session, last_checkpoint)
 
       if self.stream:
         self.sv.start_queue_runners(session)
