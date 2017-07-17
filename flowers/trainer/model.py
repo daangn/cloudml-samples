@@ -125,11 +125,11 @@ class GraphReferences(object):
 
 
 def get_extra_embeddings(tensors):
-    tensors.input_category_id = tf.placeholder(tf.int32, shape=[1])
-    tensors.input_price = tf.placeholder(tf.float32, shape=[1])
-    tensors.input_images_count = tf.placeholder(tf.float32, shape=[1])
-    tensors.input_created_at_ts = tf.placeholder(tf.float64, shape=[1])
-    tensors.input_offerable = tf.placeholder(tf.float32, shape=[1])
+    tensors.input_category_id = tf.placeholder(tf.int32, shape=[None])
+    tensors.input_price = tf.placeholder(tf.float32, shape=[None])
+    tensors.input_images_count = tf.placeholder(tf.float32, shape=[None])
+    tensors.input_created_at_ts = tf.placeholder(tf.float64, shape=[None])
+    tensors.input_offerable = tf.placeholder(tf.float32, shape=[None])
 
     category_id = tensors.input_category_id
     price = tensors.input_price
