@@ -165,8 +165,6 @@ class Model(object):
 
   def add_final_training_ops(self,
                              embeddings,
-                             text_embeddings,
-                             extra_embeddings,
                              all_labels_count,
                              hidden_layer_size=(BOTTLENECK_TENSOR_SIZE + TEXT_EMBEDDING_SIZE + EXTRA_EMBEDDING_SIZE) / 4,
                              dropout_keep_prob=None):
@@ -188,7 +186,6 @@ class Model(object):
       logits: The logits tensor.
     """
     with tf.name_scope('input'):
-      embeddings = tf.concat([embeddings, text_embeddings, extra_embeddings], 1)
       with tf.name_scope('Wx_plus_b'):
         hidden = layers.fully_connected(embeddings, hidden_layer_size)
         # We need a dropout when the size of the dataset is rather small.
@@ -320,10 +317,10 @@ class Model(object):
     # label_count+1.
     all_labels_count = self.label_count + 1
     with tf.name_scope('final_ops'):
+      embeddings = tf.concat([embeddings, text_embeddings, extra_embeddings],
+          1, name='article_embedding')
       softmax, logits = self.add_final_training_ops(
           embeddings,
-          text_embeddings,
-          extra_embeddings,
           all_labels_count,
           dropout_keep_prob=self.dropout if is_training else None)
 
