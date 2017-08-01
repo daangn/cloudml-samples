@@ -3,6 +3,9 @@ from os.path import isfile, join
 from random import shuffle
 import argparse
 
+import numpy as np
+from sklearn.model_selection import StratifiedShuffleSplit
+
 parser = argparse.ArgumentParser()
 parser.add_argument('--data_dir',
     default='data/flower_photos',
@@ -27,20 +30,23 @@ CHUNK_SIZE = 3500
 root = args.data_dir
 categories = dirs(root)
 
-evals = []
-trains = []
-
+X = []
+y = []
 for category in categories:
   category_path = join(root, category)
   category_files = files(category_path)
-  category_files = [f for f in category_files if f.endswith('.jpg')]
-  shuffle(category_files)
-  i = int(len(category_files) * EVAL_RATIO)
-  evals += [(join(category_path, f), category) for f in category_files[:i]]
-  trains += [(join(category_path, f), category) for f in category_files[i:]]
+  category_files = [join(category_path, f)
+                    for f in category_files if f.endswith('.jpg')]
+  X += category_files
+  y += [category] * len(category_files)
 
-shuffle(trains)
-shuffle(evals)
+X = np.array(X)
+y = np.array(y)
+sss = StratifiedShuffleSplit(n_splits=1, test_size=EVAL_RATIO)
+train_index, test_index = next(sss.split(X, y))
+
+trains = zip(X[train_index], y[train_index])
+evals = zip(X[test_index], y[test_index])
 
 for i, chunk_trains in enumerate(chunks(trains, CHUNK_SIZE)):
   with open("data/train_set%d.csv" % i, 'w') as f:
