@@ -138,17 +138,11 @@ class ExtractTextDataDoFn(beam.DoFn):
 
   def process(self, item):
     key = item[0]
-    try:
-      text_embedding = [float(x) for x in item[1].rstrip().split(' ')]
-    except ValueError as e:
-      logging.error("%s", item)
-      raise e
-
-    category_id = item[2]
-    price = item[3]
-    images_count = item[4]
-    created_at_ts = item[5]
-    offerable = item[6]
+    category_id = item[1]
+    price = item[2]
+    images_count = item[3]
+    created_at_ts = item[4]
+    offerable = item[5]
 
     extra_embedding = self.sess.run(self.extra_embeddings, feed_dict={
           self.tensors.input_price: [price],
@@ -159,7 +153,6 @@ class ExtractTextDataDoFn(beam.DoFn):
           })[0]
 
     yield key, {
-          'text_embedding': text_embedding,
           'extra_embedding': list(extra_embedding),
           }
 
@@ -396,7 +389,7 @@ class TFExampleFromImageDoFn(beam.DoFn):
       return tf.train.Feature(float_list=tf.train.FloatList(value=value))
 
     def _int_feature(value):
-      return tf.train.Feature(float_list=tf.train.Int64List(value=value))
+      return tf.train.Feature(int64_list=tf.train.Int64List(value=value))
 
     try:
       element = element.element
@@ -405,8 +398,13 @@ class TFExampleFromImageDoFn(beam.DoFn):
     uri, label_ids, image_bytes, embedding = element
 
     if not self.data_map:
+      content_map, content_len_map = get_seq_data()
       for i, item in enumerate(all_text_data):
-        self.data_map[int(item[0])] = item[1]
+        id = int(item[0])
+        data = item[1]
+        data['content_embedding'] = content_map[id]
+        data['content_length'] = content_len_map[id]
+        self.data_map[id] = data
 
     try:
       if embedding is None:
@@ -432,7 +430,8 @@ class TFExampleFromImageDoFn(beam.DoFn):
     example = tf.train.Example(features=tf.train.Features(feature={
         'image_uri': _bytes_feature([uri]),
         'embedding': _float_feature(embedding.ravel().tolist()),
-        'text_embedding': _float_feature(data['text_embedding']),
+        'content_embedding': _float_feature(data['content_embedding']),
+        'content_length': _int_feature([data['content_length']]),
         'extra_embedding': _float_feature(data['extra_embedding']),
     }))
 
@@ -442,6 +441,26 @@ class TFExampleFromImageDoFn(beam.DoFn):
 
     yield example
 
+def get_seq_data():
+    CONTENT_DIM = 128
+    MAX_WORDS_COUNT = 100
+    #MAX_WORDS_COUNT = 768
+    CONTENT_EMB_LENGTH = CONTENT_DIM * MAX_WORDS_COUNT
+    items = []
+    lens = []
+    with open('data/content_embs.txt') as f:
+        for line in f:
+            item = np.zeros(CONTENT_EMB_LENGTH)
+            values = [float(x) for x in line.rstrip().split(' ')]
+            values_count = min(len(values), CONTENT_EMB_LENGTH)
+            item[:values_count] = values[:values_count]
+            items.append(item)
+            lens.append(values_count)
+    with open('data/ids.txt') as f:
+        ids = [int(line.strip()) for line in f.readlines()]
+    item_map = dict(zip(ids, items))
+    len_map = dict(zip(ids, lens))
+    return item_map, len_map
 
 def configure_pipeline(p, opt):
   """Specify PCollection and transformations in pipeline."""

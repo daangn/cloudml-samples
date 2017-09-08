@@ -26,6 +26,7 @@ from tensorflow.python.saved_model import signature_constants
 from tensorflow.python.saved_model import signature_def_utils
 from tensorflow.python.saved_model import tag_constants
 from tensorflow.python.saved_model import utils as saved_model_utils
+from tensorflow.python.ops import init_ops
 
 import util
 from util import override_if_not_in_args
@@ -47,10 +48,13 @@ MAX_IMAGES_COUNT = 10.0
 DAY_TIME = 60.0 * 60 * 24
 
 BOTTLENECK_TENSOR_SIZE = 2048
-TEXT_EMBEDDING_SIZE = 10
+TEXT_EMBEDDING_SIZE = 128
 FEATURES_COUNT = 10
 EXTRA_EMBEDDING_SIZE = FEATURES_COUNT + TOTAL_CATEGORIES_COUNT
 
+CONTENT_DIM = 10
+MAX_WORDS_COUNT = 768
+CONTENT_EMB_LENGTH = CONTENT_DIM * MAX_WORDS_COUNT
 
 class GraphMod():
   TRAIN = 1
@@ -299,9 +303,12 @@ class Model(object):
             'embedding':
                 tf.FixedLenFeature(
                     shape=[BOTTLENECK_TENSOR_SIZE], dtype=tf.float32),
-            'text_embedding':
+            'content_embedding':
                 tf.FixedLenFeature(
-                    shape=[TEXT_EMBEDDING_SIZE], dtype=tf.float32),
+                    shape=[CONTENT_EMB_LENGTH], dtype=tf.float32),
+            'content_length':
+                tf.FixedLenFeature(
+                    shape=[1], dtype=tf.int64),
             'extra_embedding':
                 tf.FixedLenFeature(
                     shape=[EXTRA_EMBEDDING_SIZE], dtype=tf.float32),
@@ -310,14 +317,30 @@ class Model(object):
         labels = tf.squeeze(parsed['label'])
         uris = tf.squeeze(parsed['image_uri'])
         embeddings = parsed['embedding']
-        text_embeddings = parsed['text_embedding']
+        content_embeddings = parsed['content_embedding']
+        content_lengths = parsed['content_length']
         extra_embeddings = parsed['extra_embedding']
+
+    initializer = init_ops.random_uniform_initializer(-0.01, 0.01)
+    def lstm_cell():
+        hidden_size = TEXT_EMBEDDING_SIZE
+        input_size = CONTENT_DIM
+        cell = tf.contrib.rnn.LSTMCell(hidden_size, input_size, initializer=initializer, state_is_tuple=True)
+        return cell
 
     # We assume a default label, so the total number of labels is equal to
     # label_count+1.
     all_labels_count = self.label_count + 1
     with tf.name_scope('final_ops'):
-      embeddings = tf.concat([embeddings, text_embeddings, extra_embeddings],
+      cell = tf.contrib.rnn.MultiRNNCell([lstm_cell() for _ in range(2)], state_is_tuple=True)
+      #cell = tf.contrib.rnn.BasicLSTMCell(
+      #    num_units=TEXT_EMBEDDING_SIZE, state_is_tuple=True, activation=tf.tanh)
+      content_embeddings = tf.reshape(content_embeddings, [-1, MAX_WORDS_COUNT, CONTENT_DIM])
+      content_lengths = tf.reshape(content_lengths, [-1])
+      outputs, states = tf.nn.dynamic_rnn(cell, content_embeddings, sequence_length=content_lengths, dtype=tf.float32)
+      last_outputs = states[-1].h
+      #last_outputs = outputs[:, -1]
+      embeddings = tf.concat([embeddings, last_outputs, extra_embeddings],
           1, name='article_embedding')
       softmax, logits = self.add_final_training_ops(
           embeddings,

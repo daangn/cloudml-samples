@@ -1,0 +1,9 @@
+RAILS_ROOT="/Users/muik/works/daangn/hoian-webapp"
+docker run --rm -it -v $(pwd):/app \
+           --volumes-from gcloud-config \
+           -v "${RAILS_ROOT}/tmp/cache/category_images":/app/data/flower_photos \
+           -v "${RAILS_ROOT}/tmp/cache/commercial_text/data/emb.csv":/app/data/emb.csv \
+           -v "${RAILS_ROOT}/tmp/cache/commercial_text/data/content_embs.txt":/app/data/content_embs.txt \
+           -v "${RAILS_ROOT}/tmp/cache/commercial_text/data/ids.txt":/app/data/ids.txt \
+           -p 6006:6006 \
+           daangn/cloud-ml:169 /bin/bash
