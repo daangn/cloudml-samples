@@ -253,8 +253,8 @@ class Trainer(object):
             self.eval(session)
 
             # Export the model for inference.
-            #self.model.export(
-            #    tf.train.latest_checkpoint(self.train_path), self.model_path)
+            self.model.export(
+                tf.train.latest_checkpoint(self.train_path), self.model_path)
 
       except tf.errors.AbortedError:
         should_retry = True

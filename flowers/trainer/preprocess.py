@@ -121,7 +121,8 @@ class Default(object):
   # inception graph or when a newer checkpoint file is available. See
   # https://research.googleblog.com/2016/08/improving-inception-and-image.html
   IMAGE_GRAPH_CHECKPOINT_URI = (
-      'gs://cloud-ml-data/img/flower_photos/inception_v3_2016_08_28.ckpt')
+      'data/inception_v3_2016_08_28.ckpt')
+  #    'gs://cloud-ml-data/img/flower_photos/inception_v3_2016_08_28.ckpt')
 
 
 class ExtractTextDataDoFn(beam.DoFn):
@@ -404,6 +405,9 @@ class TFExampleFromImageDoFn(beam.DoFn):
         data = item[1]
         data['content_embedding'] = content_map[id]
         data['content_length'] = content_len_map[id]
+        if data['content_length'] < 1:
+            logging.warning('content_length 0 - id: %d', id)
+            next
         self.data_map[id] = data
 
     try:
@@ -443,7 +447,7 @@ class TFExampleFromImageDoFn(beam.DoFn):
 
 def get_seq_data():
     CONTENT_DIM = 128
-    MAX_WORDS_COUNT = 100
+    MAX_WORDS_COUNT = 200
     #MAX_WORDS_COUNT = 768
     CONTENT_EMB_LENGTH = CONTENT_DIM * MAX_WORDS_COUNT
     items = []
@@ -455,7 +459,7 @@ def get_seq_data():
             values_count = min(len(values), CONTENT_EMB_LENGTH)
             item[:values_count] = values[:values_count]
             items.append(item)
-            lens.append(values_count)
+            lens.append(values_count / CONTENT_DIM)
     with open('data/ids.txt') as f:
         ids = [int(line.strip()) for line in f.readlines()]
     item_map = dict(zip(ids, items))

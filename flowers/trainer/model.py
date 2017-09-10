@@ -17,6 +17,7 @@
 import argparse
 import logging
 
+import numpy as np
 import tensorflow as tf
 from tensorflow.contrib import layers
 from tensorflow.contrib.slim.python.slim.nets import inception_v3 as inception
@@ -27,6 +28,11 @@ from tensorflow.python.saved_model import signature_def_utils
 from tensorflow.python.saved_model import tag_constants
 from tensorflow.python.saved_model import utils as saved_model_utils
 from tensorflow.python.ops import init_ops
+from tensorflow.python.ops import rnn_cell
+from tensorflow.python.ops import array_ops
+from tensorflow.python.ops import rnn
+from tensorflow.contrib.rnn.python.ops import rnn as contrib_rnn
+from tensorflow.python.framework import dtypes
 
 import util
 from util import override_if_not_in_args
@@ -52,8 +58,8 @@ TEXT_EMBEDDING_SIZE = 128
 FEATURES_COUNT = 10
 EXTRA_EMBEDDING_SIZE = FEATURES_COUNT + TOTAL_CATEGORIES_COUNT
 
-CONTENT_DIM = 10
-MAX_WORDS_COUNT = 768
+CONTENT_DIM = 128
+MAX_WORDS_COUNT = 200
 CONTENT_EMB_LENGTH = CONTENT_DIM * MAX_WORDS_COUNT
 
 class GraphMod():
@@ -332,14 +338,75 @@ class Model(object):
     # label_count+1.
     all_labels_count = self.label_count + 1
     with tf.name_scope('final_ops'):
-      cell = tf.contrib.rnn.MultiRNNCell([lstm_cell() for _ in range(2)], state_is_tuple=True)
-      #cell = tf.contrib.rnn.BasicLSTMCell(
-      #    num_units=TEXT_EMBEDDING_SIZE, state_is_tuple=True, activation=tf.tanh)
       content_embeddings = tf.reshape(content_embeddings, [-1, MAX_WORDS_COUNT, CONTENT_DIM])
       content_lengths = tf.reshape(content_lengths, [-1])
-      outputs, states = tf.nn.dynamic_rnn(cell, content_embeddings, sequence_length=content_lengths, dtype=tf.float32)
-      last_outputs = states[-1].h
-      #last_outputs = outputs[:, -1]
+
+      if True:
+          num_hidden = TEXT_EMBEDDING_SIZE / 2
+          cell_fw = tf.nn.rnn_cell.LSTMCell(num_units=num_hidden, state_is_tuple=True)
+          cell_bw = tf.nn.rnn_cell.LSTMCell(num_units=num_hidden, state_is_tuple=True)
+          outputs, output_state_fw, output_state_bw = contrib_rnn.stack_bidirectional_dynamic_rnn(
+              [cell_fw] * 2, [cell_bw] * 2, content_embeddings,
+              sequence_length=content_lengths,
+              dtype=tf.float32)
+          print(output_state_fw)
+          last_outputs = tf.concat([output_state_fw[-1].h, output_state_bw[-1].h], 1)
+      elif True:
+          num_hidden = TEXT_EMBEDDING_SIZE
+          cell_fw = tf.nn.rnn_cell.LSTMCell(num_units=num_hidden, state_is_tuple=True)
+          cell_bw = tf.nn.rnn_cell.LSTMCell(num_units=num_hidden, state_is_tuple=True)
+          outputs, states  = tf.nn.bidirectional_dynamic_rnn(
+              cell_fw, cell_bw, content_embeddings,
+              sequence_length=content_lengths,
+              dtype=tf.float32)
+          output_fw, output_bw = outputs
+          output_state_fw, output_state_bw = states
+          #last_outputs = tf.concat([output_fw[:, 0], output_state_bw.h], 1)
+          last_outputs = tf.concat([output_state_fw.h, output_state_bw.h], 1)
+      elif False:
+          num_hidden = TEXT_EMBEDDING_SIZE
+          lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(num_hidden, forget_bias=1.0)
+          lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(num_hidden, forget_bias=1.0)
+          content_embeddings = tf.unstack(content_embeddings, 200, 1)
+          print(content_lengths)
+          outputs, _, _ = tf.contrib.rnn.static_bidirectional_rnn(
+                  lstm_fw_cell, lstm_bw_cell, content_embeddings,
+                  sequence_length=content_lengths,
+                  dtype=tf.float32)
+          last_outputs = outputs[-1]
+      elif False:
+          layers = [2, 3]
+          input_size = CONTENT_DIM
+          cell_fw = rnn_cell.LSTMCell(
+                  TEXT_EMBEDDING_SIZE / 2,
+                  initializer=initializer,
+                  state_is_tuple=False)
+          cell_bw = rnn_cell.LSTMCell(
+                  TEXT_EMBEDDING_SIZE / 2,
+                  initializer=initializer,
+                  state_is_tuple=False)
+
+          batch_size = embeddings.shape[0]
+
+          initial_states_fw = [
+              np.zeros((batch_size, TEXT_EMBEDDING_SIZE), dtype=np.float32)
+              for layer in layers
+          ]
+          initial_states_bw = [
+              np.zeros((batch_size, TEXT_EMBEDDING_SIZE), dtype=np.float32)
+              for layer in layers
+          ]
+
+          outputs, states = rnn.bidirectional_dynamic_rnn(
+              cell_fw, cell_bw, content_embeddings,
+              sequence_length=content_lengths,
+              dtype=dtypes.float32)
+          last_outputs = states[1]
+      else:
+          cell = tf.contrib.rnn.MultiRNNCell([lstm_cell() for _ in range(2)], state_is_tuple=True)
+          outputs, states = tf.nn.dynamic_rnn(cell, content_embeddings, sequence_length=content_lengths, dtype=tf.float32)
+          last_outputs = states[-1].h
+      print(last_outputs)
       embeddings = tf.concat([embeddings, last_outputs, extra_embeddings],
           1, name='article_embedding')
       softmax, logits = self.add_final_training_ops(
