@@ -342,14 +342,28 @@ class Model(object):
       content_lengths = tf.reshape(content_lengths, [-1])
 
       if True:
-          num_hidden = TEXT_EMBEDDING_SIZE / 2
-          cell_fw = tf.nn.rnn_cell.LSTMCell(num_units=num_hidden, state_is_tuple=True)
-          cell_bw = tf.nn.rnn_cell.LSTMCell(num_units=num_hidden, state_is_tuple=True)
+          layers = [TEXT_EMBEDDING_SIZE / 2, TEXT_EMBEDDING_SIZE]
+          input_size = CONTENT_DIM
+          initializer = init_ops.random_uniform_initializer(-0.01, 0.01)
+          cells_fw = [
+              rnn_cell.LSTMCell(
+                  num_units,
+                  input_size,
+                  initializer=initializer,
+                  state_is_tuple=True) for num_units in layers
+          ]
+          cells_bw = [
+              rnn_cell.LSTMCell(
+                  num_units,
+                  input_size,
+                  initializer=initializer,
+                  state_is_tuple=True) for num_units in layers
+          ]
+
           outputs, output_state_fw, output_state_bw = contrib_rnn.stack_bidirectional_dynamic_rnn(
-              [cell_fw] * 2, [cell_bw] * 2, content_embeddings,
+              cells_fw, cells_bw, content_embeddings,
               sequence_length=content_lengths,
               dtype=tf.float32)
-          print(output_state_fw)
           last_outputs = tf.concat([output_state_fw[-1].h, output_state_bw[-1].h], 1)
       elif True:
           num_hidden = TEXT_EMBEDDING_SIZE
