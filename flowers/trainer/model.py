@@ -342,7 +342,8 @@ class Model(object):
       content_lengths = tf.reshape(content_lengths, [-1])
 
       if True:
-          layers2 = [TEXT_EMBEDDING_SIZE / 2, TEXT_EMBEDDING_SIZE]
+          #layers2 = [TEXT_EMBEDDING_SIZE / 2, TEXT_EMBEDDING_SIZE]
+          layers2 = [TEXT_EMBEDDING_SIZE]
           input_size = CONTENT_DIM
           initializer = init_ops.random_uniform_initializer(-0.01, 0.01)
           cells_fw = [
@@ -365,7 +366,7 @@ class Model(object):
               sequence_length=content_lengths,
               dtype=tf.float32)
           #last_outputs = tf.concat([output_state_fw[-1].h, output_state_bw[-1].h], 1)
-          last_outputs = tf.concat([output_state_fw[-1].h, outputs[-1][:, 0])
+          last_outputs = outputs[:, 0]
       elif True:
           num_hidden = TEXT_EMBEDDING_SIZE
           cell_fw = tf.nn.rnn_cell.LSTMCell(num_units=num_hidden, state_is_tuple=True)
@@ -393,16 +394,19 @@ class Model(object):
           outputs, states = tf.nn.dynamic_rnn(cell, content_embeddings, sequence_length=content_lengths, dtype=tf.float32)
           last_outputs = states[-1].h
 
-      last_outputs = layers.fully_connected(last_outputs, TEXT_EMBEDDING_SIZE)
       dropout_keep_prob = self.dropout if is_training else None
-      extra_embeddings = layers.fully_connected(extra_embeddings, EXTRA_EMBEDDING_SIZE / 2, normalizer_fn=tf.contrib.slim.batch_norm)
+      last_outputs = layers.fully_connected(last_outputs, TEXT_EMBEDDING_SIZE)
+      extra_embeddings = layers.fully_connected(
+              extra_embeddings, EXTRA_EMBEDDING_SIZE / 2,
+              normalizer_fn=tf.contrib.slim.batch_norm)
       embeddings = layers.fully_connected(embeddings, BOTTLENECK_TENSOR_SIZE / 16)
       if dropout_keep_prob:
         last_outputs = tf.nn.dropout(last_outputs, dropout_keep_prob)
         extra_embeddings = tf.nn.dropout(extra_embeddings, dropout_keep_prob)
         embeddings = tf.nn.dropout(embeddings, dropout_keep_prob)
 
-      hidden_layer_size = (BOTTLENECK_TENSOR_SIZE / 16 + EXTRA_EMBEDDING_SIZE / 2 + TEXT_EMBEDDING_SIZE)/4
+      hidden_layer_size = (BOTTLENECK_TENSOR_SIZE / 16 + EXTRA_EMBEDDING_SIZE / 2 + TEXT_EMBEDDING_SIZE)/8
+      print('hidden_layer_size: %d' % hidden_layer_size)
       embeddings = tf.concat([embeddings, last_outputs, extra_embeddings],
           1, name='article_embedding')
       softmax, logits = self.add_final_training_ops(
