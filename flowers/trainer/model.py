@@ -54,7 +54,7 @@ MAX_IMAGES_COUNT = 10.0
 DAY_TIME = 60.0 * 60 * 24
 
 BOTTLENECK_TENSOR_SIZE = 2048
-TEXT_EMBEDDING_SIZE = 128
+TEXT_EMBEDDING_SIZE = 32
 FEATURES_COUNT = 10
 EXTRA_EMBEDDING_SIZE = FEATURES_COUNT + TOTAL_CATEGORIES_COUNT
 
@@ -342,7 +342,7 @@ class Model(object):
       content_lengths = tf.reshape(content_lengths, [-1])
 
       if True:
-          layers = [TEXT_EMBEDDING_SIZE / 2, TEXT_EMBEDDING_SIZE]
+          layers2 = [TEXT_EMBEDDING_SIZE / 2, TEXT_EMBEDDING_SIZE]
           input_size = CONTENT_DIM
           initializer = init_ops.random_uniform_initializer(-0.01, 0.01)
           cells_fw = [
@@ -350,21 +350,22 @@ class Model(object):
                   num_units,
                   input_size,
                   initializer=initializer,
-                  state_is_tuple=True) for num_units in layers
+                  state_is_tuple=True) for num_units in layers2
           ]
           cells_bw = [
               rnn_cell.LSTMCell(
                   num_units,
                   input_size,
                   initializer=initializer,
-                  state_is_tuple=True) for num_units in layers
+                  state_is_tuple=True) for num_units in layers2
           ]
 
           outputs, output_state_fw, output_state_bw = contrib_rnn.stack_bidirectional_dynamic_rnn(
               cells_fw, cells_bw, content_embeddings,
               sequence_length=content_lengths,
               dtype=tf.float32)
-          last_outputs = tf.concat([output_state_fw[-1].h, output_state_bw[-1].h], 1)
+          #last_outputs = tf.concat([output_state_fw[-1].h, output_state_bw[-1].h], 1)
+          last_outputs = tf.concat([output_state_fw[-1].h, outputs[-1][:, 0])
       elif True:
           num_hidden = TEXT_EMBEDDING_SIZE
           cell_fw = tf.nn.rnn_cell.LSTMCell(num_units=num_hidden, state_is_tuple=True)
@@ -382,50 +383,32 @@ class Model(object):
           lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(num_hidden, forget_bias=1.0)
           lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(num_hidden, forget_bias=1.0)
           content_embeddings = tf.unstack(content_embeddings, 200, 1)
-          print(content_lengths)
           outputs, _, _ = tf.contrib.rnn.static_bidirectional_rnn(
                   lstm_fw_cell, lstm_bw_cell, content_embeddings,
                   sequence_length=content_lengths,
                   dtype=tf.float32)
           last_outputs = outputs[-1]
-      elif False:
-          layers = [2, 3]
-          input_size = CONTENT_DIM
-          cell_fw = rnn_cell.LSTMCell(
-                  TEXT_EMBEDDING_SIZE / 2,
-                  initializer=initializer,
-                  state_is_tuple=False)
-          cell_bw = rnn_cell.LSTMCell(
-                  TEXT_EMBEDDING_SIZE / 2,
-                  initializer=initializer,
-                  state_is_tuple=False)
-
-          batch_size = embeddings.shape[0]
-
-          initial_states_fw = [
-              np.zeros((batch_size, TEXT_EMBEDDING_SIZE), dtype=np.float32)
-              for layer in layers
-          ]
-          initial_states_bw = [
-              np.zeros((batch_size, TEXT_EMBEDDING_SIZE), dtype=np.float32)
-              for layer in layers
-          ]
-
-          outputs, states = rnn.bidirectional_dynamic_rnn(
-              cell_fw, cell_bw, content_embeddings,
-              sequence_length=content_lengths,
-              dtype=dtypes.float32)
-          last_outputs = states[1]
       else:
           cell = tf.contrib.rnn.MultiRNNCell([lstm_cell() for _ in range(2)], state_is_tuple=True)
           outputs, states = tf.nn.dynamic_rnn(cell, content_embeddings, sequence_length=content_lengths, dtype=tf.float32)
           last_outputs = states[-1].h
-      print(last_outputs)
+
+      last_outputs = layers.fully_connected(last_outputs, TEXT_EMBEDDING_SIZE)
+      dropout_keep_prob = self.dropout if is_training else None
+      extra_embeddings = layers.fully_connected(extra_embeddings, EXTRA_EMBEDDING_SIZE / 2, normalizer_fn=tf.contrib.slim.batch_norm)
+      embeddings = layers.fully_connected(embeddings, BOTTLENECK_TENSOR_SIZE / 16)
+      if dropout_keep_prob:
+        last_outputs = tf.nn.dropout(last_outputs, dropout_keep_prob)
+        extra_embeddings = tf.nn.dropout(extra_embeddings, dropout_keep_prob)
+        embeddings = tf.nn.dropout(embeddings, dropout_keep_prob)
+
+      hidden_layer_size = (BOTTLENECK_TENSOR_SIZE / 16 + EXTRA_EMBEDDING_SIZE / 2 + TEXT_EMBEDDING_SIZE)/4
       embeddings = tf.concat([embeddings, last_outputs, extra_embeddings],
           1, name='article_embedding')
       softmax, logits = self.add_final_training_ops(
           embeddings,
           all_labels_count,
+          hidden_layer_size=hidden_layer_size,
           dropout_keep_prob=self.dropout if is_training else None)
 
     # Prediction is the index of the label with the highest score. We are

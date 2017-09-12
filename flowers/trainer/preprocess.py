@@ -363,8 +363,7 @@ class TFExampleFromImageDoFn(beam.DoFn):
                      stored.
   """
 
-  def __init__(self):
-    self.tf_session = None
+  def __init__(self, graph=None, preprocess_graph=None):
     self.graph = None
     self.preprocess_graph = None
 
@@ -375,9 +374,9 @@ class TFExampleFromImageDoFn(beam.DoFn):
     # when instance of TFExampleFromImageDoFn() is destructed.
     if not self.graph:
       self.graph = tf.Graph()
-      self.tf_session = tf.InteractiveSession(graph=self.graph)
+      tf_session = tf.InteractiveSession(graph=self.graph)
       with self.graph.as_default():
-        self.preprocess_graph = EmbeddingsGraph(self.tf_session)
+        self.preprocess_graph = EmbeddingsGraph(tf_session)
 
     self.data_map = {}
 
@@ -429,7 +428,8 @@ class TFExampleFromImageDoFn(beam.DoFn):
     id, _ = os.path.basename(uri).split('.')
     data = self.data_map[int(id)]
     if not data:
-      raise ("no data for id %s" % id)
+      logging.warning("no data for id %d", id)
+      return
 
     example = tf.train.Example(features=tf.train.Features(feature={
         'image_uri': _bytes_feature([uri]),
@@ -475,6 +475,12 @@ def configure_pipeline(p, opt):
   read_text_data_source = beam.io.ReadFromText(
       opt.text_data_path, strip_trailing_newlines=True, skip_header_lines=1)
   labels = (p | 'Read dictionary' >> read_label_source)
+
+  graph = tf.Graph()
+  tf_session = tf.InteractiveSession(graph=graph)
+  with graph.as_default():
+    preprocess_graph = EmbeddingsGraph(tf_session)
+
   text_data = (p
       | 'Read text data' >> read_text_data_source
       | 'Parse text data' >> beam.Map(lambda line: csv.reader([line]).next())
@@ -486,7 +492,7 @@ def configure_pipeline(p, opt):
                                            beam.pvalue.AsIter(labels))
        | 'Read and convert to JPEG'
        >> beam.ParDo(ReadImageAndConvertToJpegDoFn())
-       | 'Embed and make TFExample' >> beam.ParDo(TFExampleFromImageDoFn(),
+       | 'Embed and make TFExample' >> beam.ParDo(TFExampleFromImageDoFn(graph, tf_session),
                                            beam.pvalue.AsIter(text_data))
        # TODO(b/35133536): Get rid of this Map and instead use
        # coder=beam.coders.ProtoCoder(tf.train.Example) in WriteToTFRecord

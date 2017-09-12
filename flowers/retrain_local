@@ -21,9 +21,9 @@ echo
 echo "Using job id: " $JOB_ID
 
 if [[ $CMD == 'pre' ]]; then
-  #echo "Generate csv files"
-  #rm -f data/train_set*.csv data/eval_set*.csv
-  #python gen_csv.py
+  echo "Generate csv files"
+  rm -f data/train_set*.csv data/eval_set*.csv
+  python gen_csv.py
 
   for f in `ls ${DATA_PATH}/eval_set*.csv`
   do
