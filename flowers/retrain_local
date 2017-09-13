@@ -144,7 +144,7 @@ elif [[ $CMD == 'tb' ]]; then
 
 else
 
-  ./retrain_local pre
+  #./retrain_local pre
   ./retrain_local train_test
 
 fi

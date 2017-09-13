@@ -139,11 +139,17 @@ class ExtractTextDataDoFn(beam.DoFn):
 
   def process(self, item):
     key = item[0]
-    category_id = item[1]
-    price = item[2]
-    images_count = item[3]
-    created_at_ts = item[4]
-    offerable = item[5]
+    try:
+      text_embedding = [float(x) for x in item[1].rstrip().split(' ')]
+    except ValueError as e:
+      logging.error("%s", item)
+      raise e
+
+    category_id = item[2]
+    price = item[3]
+    images_count = item[4]
+    created_at_ts = item[5]
+    offerable = item[6]
 
     extra_embedding = self.sess.run(self.extra_embeddings, feed_dict={
           self.tensors.input_price: [price],
@@ -154,6 +160,7 @@ class ExtractTextDataDoFn(beam.DoFn):
           })[0]
 
     yield key, {
+          'text_embedding': text_embedding,
           'extra_embedding': list(extra_embedding),
           }
 
@@ -372,7 +379,7 @@ class TFExampleFromImageDoFn(beam.DoFn):
     # The same instance of session is re-used between bundles.
     # Session is closed by the destructor of Session object, which is called
     # when instance of TFExampleFromImageDoFn() is destructed.
-    if not self.graph:
+    if not self.graph and False:
       self.graph = tf.Graph()
       tf_session = tf.InteractiveSession(graph=self.graph)
       with self.graph.as_default():
@@ -398,7 +405,7 @@ class TFExampleFromImageDoFn(beam.DoFn):
     uri, label_ids, image_bytes, embedding = element
 
     if not self.data_map:
-      content_map, content_len_map = get_seq_data()
+      logging.info("data_map loading")
       for i, item in enumerate(all_text_data):
         id = int(item[0])
         data = item[1]
@@ -408,6 +415,7 @@ class TFExampleFromImageDoFn(beam.DoFn):
             logging.warning('content_length 0 - id: %d', id)
             next
         self.data_map[id] = data
+      logging.info("data_map loaded")
 
     try:
       if embedding is None:
@@ -434,6 +442,7 @@ class TFExampleFromImageDoFn(beam.DoFn):
     example = tf.train.Example(features=tf.train.Features(feature={
         'image_uri': _bytes_feature([uri]),
         'embedding': _float_feature(embedding.ravel().tolist()),
+        'text_embedding': _float_feature(data['text_embedding']),
         'content_embedding': _float_feature(data['content_embedding']),
         'content_length': _int_feature([data['content_length']]),
         'extra_embedding': _float_feature(data['extra_embedding']),
@@ -465,6 +474,8 @@ def get_seq_data():
     item_map = dict(zip(ids, items))
     len_map = dict(zip(ids, lens))
     return item_map, len_map
+
+content_map, content_len_map = get_seq_data()
 
 def configure_pipeline(p, opt):
   """Specify PCollection and transformations in pipeline."""

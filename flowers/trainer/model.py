@@ -27,15 +27,13 @@ from tensorflow.python.saved_model import signature_constants
 from tensorflow.python.saved_model import signature_def_utils
 from tensorflow.python.saved_model import tag_constants
 from tensorflow.python.saved_model import utils as saved_model_utils
-from tensorflow.python.ops import init_ops
-from tensorflow.python.ops import rnn_cell
-from tensorflow.python.ops import array_ops
-from tensorflow.python.ops import rnn
-from tensorflow.contrib.rnn.python.ops import rnn as contrib_rnn
-from tensorflow.python.framework import dtypes
+
+from rnn import stack_bidirectional_dynamic_rnn
 
 import util
 from util import override_if_not_in_args
+
+from attention import attention
 
 slim = tf.contrib.slim
 
@@ -54,10 +52,11 @@ MAX_IMAGES_COUNT = 10.0
 DAY_TIME = 60.0 * 60 * 24
 
 BOTTLENECK_TENSOR_SIZE = 2048
-TEXT_EMBEDDING_SIZE = 8
+TEXT_EMBEDDING_SIZE = 10
 FEATURES_COUNT = 10
 EXTRA_EMBEDDING_SIZE = FEATURES_COUNT + TOTAL_CATEGORIES_COUNT
 
+RNN_UNIT_SIZE = 16
 CONTENT_DIM = 128
 MAX_WORDS_COUNT = 200
 CONTENT_EMB_LENGTH = CONTENT_DIM * MAX_WORDS_COUNT
@@ -309,6 +308,9 @@ class Model(object):
             'embedding':
                 tf.FixedLenFeature(
                     shape=[BOTTLENECK_TENSOR_SIZE], dtype=tf.float32),
+            'text_embedding':
+                tf.FixedLenFeature(
+                    shape=[TEXT_EMBEDDING_SIZE], dtype=tf.float32),
             'content_embedding':
                 tf.FixedLenFeature(
                     shape=[CONTENT_EMB_LENGTH], dtype=tf.float32),
@@ -323,94 +325,40 @@ class Model(object):
         labels = tf.squeeze(parsed['label'])
         uris = tf.squeeze(parsed['image_uri'])
         embeddings = parsed['embedding']
+        text_embeddings = parsed['text_embedding']
         content_embeddings = parsed['content_embedding']
         content_lengths = parsed['content_length']
         extra_embeddings = parsed['extra_embedding']
-
-    initializer = init_ops.random_uniform_initializer(-0.01, 0.01)
-    def lstm_cell():
-        hidden_size = TEXT_EMBEDDING_SIZE
-        input_size = CONTENT_DIM
-        cell = tf.contrib.rnn.LSTMCell(hidden_size, input_size, initializer=initializer, state_is_tuple=True)
-        return cell
 
     # We assume a default label, so the total number of labels is equal to
     # label_count+1.
     all_labels_count = self.label_count + 1
     with tf.name_scope('final_ops'):
+      dropout_keep_prob = self.dropout if is_training else None
       content_embeddings = tf.reshape(content_embeddings, [-1, MAX_WORDS_COUNT, CONTENT_DIM])
       content_lengths = tf.reshape(content_lengths, [-1])
 
-      if True:
-          #layers2 = [TEXT_EMBEDDING_SIZE / 2, TEXT_EMBEDDING_SIZE]
-          layers2 = [TEXT_EMBEDDING_SIZE]
-          cells_fw = [
-              rnn_cell.LSTMCell(
-                  num_units,
-                  state_is_tuple=True) for num_units in layers2
-          ]
-          cells_bw = [
-              rnn_cell.LSTMCell(
-                  num_units,
-                  state_is_tuple=True) for num_units in layers2
-          ]
+      layer_sizes = [RNN_UNIT_SIZE]
+      last_outputs = stack_bidirectional_dynamic_rnn(
+              content_embeddings, layer_sizes, content_lengths,
+              dropout_keep_prob=dropout_keep_prob)
+      last_outputs = layers.fully_connected(last_outputs, RNN_UNIT_SIZE)
 
-          outputs, output_state_fw, output_state_bw = contrib_rnn.stack_bidirectional_dynamic_rnn(
-              cells_fw, cells_bw, content_embeddings,
-              sequence_length=content_lengths,
-              dtype=tf.float32)
-          #last_outputs = tf.concat([output_state_fw[-1].c, output_state_fw[-1].h, output_state_fw[-1].c, output_state_bw[-1].h], 1) # eval: 83, 1200
-          last_outputs = tf.concat([output_state_fw[-1].h, output_state_bw[-1].h], 1) # eval: 81, 500
-          #last_outputs = outputs[:, 0] # eval: 83, 1000
-
-          #range1 = tf.range(content_lengths.shape[0], dtype=tf.int64)
-          #nd = tf.stack([range1, content_lengths - 1], 1)
-          #last_outputs = tf.gather_nd(outputs, nd) # eval: 76, 600
-      elif True:
-          num_hidden = TEXT_EMBEDDING_SIZE
-          cell_fw = tf.nn.rnn_cell.LSTMCell(num_units=num_hidden, state_is_tuple=True)
-          cell_bw = tf.nn.rnn_cell.LSTMCell(num_units=num_hidden, state_is_tuple=True)
-          outputs, states  = tf.nn.bidirectional_dynamic_rnn(
-              cell_fw, cell_bw, content_embeddings,
-              sequence_length=content_lengths,
-              dtype=tf.float32)
-          output_fw, output_bw = outputs
-          output_state_fw, output_state_bw = states
-          #last_outputs = tf.concat([output_fw[:, 0], output_state_bw.h], 1)
-          last_outputs = tf.concat([output_state_fw.h, output_state_bw.h], 1)
-      elif False:
-          num_hidden = TEXT_EMBEDDING_SIZE
-          lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(num_hidden, forget_bias=1.0)
-          lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(num_hidden, forget_bias=1.0)
-          content_embeddings = tf.unstack(content_embeddings, 200, 1)
-          outputs, _, _ = tf.contrib.rnn.static_bidirectional_rnn(
-                  lstm_fw_cell, lstm_bw_cell, content_embeddings,
-                  sequence_length=content_lengths,
-                  dtype=tf.float32)
-          last_outputs = outputs[-1]
-      else:
-          cell = tf.contrib.rnn.MultiRNNCell([lstm_cell() for _ in range(2)], state_is_tuple=True)
-          outputs, states = tf.nn.dynamic_rnn(cell, content_embeddings, sequence_length=content_lengths, dtype=tf.float32)
-          last_outputs = states[-1].h
-
-      dropout_keep_prob = self.dropout if is_training else None
-      last_outputs = layers.fully_connected(last_outputs, TEXT_EMBEDDING_SIZE)
       content_lengths = tf.cast(content_lengths, tf.float32)
       content_lengths = tf.stack([content_lengths, content_lengths * content_lengths], 1)
-      content_lengths = layers.fully_connected(content_lengths, 1,
-              normalizer_fn=tf.contrib.slim.batch_norm)
+      extra_embeddings = tf.concat([extra_embeddings, content_lengths], 1)
       extra_embeddings = layers.fully_connected(
               extra_embeddings, EXTRA_EMBEDDING_SIZE / 2,
               normalizer_fn=tf.contrib.slim.batch_norm)
       embeddings = layers.fully_connected(embeddings, BOTTLENECK_TENSOR_SIZE / 8)
-      if dropout_keep_prob and False:
+      if dropout_keep_prob:
         last_outputs = tf.nn.dropout(last_outputs, dropout_keep_prob)
         extra_embeddings = tf.nn.dropout(extra_embeddings, dropout_keep_prob)
         embeddings = tf.nn.dropout(embeddings, dropout_keep_prob)
 
-      hidden_layer_size = 128
-      embeddings = tf.concat([embeddings, last_outputs, extra_embeddings, content_lengths],
+      embeddings = tf.concat([embeddings, text_embeddings, last_outputs, extra_embeddings],
           1, name='article_embedding')
+      hidden_layer_size = 256
       softmax, logits = self.add_final_training_ops(
           embeddings,
           all_labels_count,
