@@ -54,7 +54,7 @@ MAX_IMAGES_COUNT = 10.0
 DAY_TIME = 60.0 * 60 * 24
 
 BOTTLENECK_TENSOR_SIZE = 2048
-TEXT_EMBEDDING_SIZE = 32
+TEXT_EMBEDDING_SIZE = 8
 FEATURES_COUNT = 10
 EXTRA_EMBEDDING_SIZE = FEATURES_COUNT + TOTAL_CATEGORIES_COUNT
 
@@ -344,20 +344,14 @@ class Model(object):
       if True:
           #layers2 = [TEXT_EMBEDDING_SIZE / 2, TEXT_EMBEDDING_SIZE]
           layers2 = [TEXT_EMBEDDING_SIZE]
-          input_size = CONTENT_DIM
-          initializer = init_ops.random_uniform_initializer(-0.01, 0.01)
           cells_fw = [
               rnn_cell.LSTMCell(
                   num_units,
-                  input_size,
-                  initializer=initializer,
                   state_is_tuple=True) for num_units in layers2
           ]
           cells_bw = [
               rnn_cell.LSTMCell(
                   num_units,
-                  input_size,
-                  initializer=initializer,
                   state_is_tuple=True) for num_units in layers2
           ]
 
@@ -365,8 +359,13 @@ class Model(object):
               cells_fw, cells_bw, content_embeddings,
               sequence_length=content_lengths,
               dtype=tf.float32)
-          #last_outputs = tf.concat([output_state_fw[-1].h, output_state_bw[-1].h], 1)
-          last_outputs = outputs[:, 0]
+          #last_outputs = tf.concat([output_state_fw[-1].c, output_state_fw[-1].h, output_state_fw[-1].c, output_state_bw[-1].h], 1) # eval: 83, 1200
+          last_outputs = tf.concat([output_state_fw[-1].h, output_state_bw[-1].h], 1) # eval: 81, 500
+          #last_outputs = outputs[:, 0] # eval: 83, 1000
+
+          #range1 = tf.range(content_lengths.shape[0], dtype=tf.int64)
+          #nd = tf.stack([range1, content_lengths - 1], 1)
+          #last_outputs = tf.gather_nd(outputs, nd) # eval: 76, 600
       elif True:
           num_hidden = TEXT_EMBEDDING_SIZE
           cell_fw = tf.nn.rnn_cell.LSTMCell(num_units=num_hidden, state_is_tuple=True)
@@ -396,18 +395,21 @@ class Model(object):
 
       dropout_keep_prob = self.dropout if is_training else None
       last_outputs = layers.fully_connected(last_outputs, TEXT_EMBEDDING_SIZE)
+      content_lengths = tf.cast(content_lengths, tf.float32)
+      content_lengths = tf.stack([content_lengths, content_lengths * content_lengths], 1)
+      content_lengths = layers.fully_connected(content_lengths, 1,
+              normalizer_fn=tf.contrib.slim.batch_norm)
       extra_embeddings = layers.fully_connected(
               extra_embeddings, EXTRA_EMBEDDING_SIZE / 2,
               normalizer_fn=tf.contrib.slim.batch_norm)
-      embeddings = layers.fully_connected(embeddings, BOTTLENECK_TENSOR_SIZE / 16)
-      if dropout_keep_prob:
+      embeddings = layers.fully_connected(embeddings, BOTTLENECK_TENSOR_SIZE / 8)
+      if dropout_keep_prob and False:
         last_outputs = tf.nn.dropout(last_outputs, dropout_keep_prob)
         extra_embeddings = tf.nn.dropout(extra_embeddings, dropout_keep_prob)
         embeddings = tf.nn.dropout(embeddings, dropout_keep_prob)
 
-      hidden_layer_size = (BOTTLENECK_TENSOR_SIZE / 16 + EXTRA_EMBEDDING_SIZE / 2 + TEXT_EMBEDDING_SIZE)/8
-      print('hidden_layer_size: %d' % hidden_layer_size)
-      embeddings = tf.concat([embeddings, last_outputs, extra_embeddings],
+      hidden_layer_size = 128
+      embeddings = tf.concat([embeddings, last_outputs, extra_embeddings, content_lengths],
           1, name='article_embedding')
       softmax, logits = self.add_final_training_ops(
           embeddings,
