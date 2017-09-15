@@ -86,6 +86,8 @@ def make_request_json(input_images, output_json, do_resize):
         'images_count': item[4],
         'created_at_ts': item[5],
         'offerable': item[6],
+        'word_embeddings': [0.0] * 25600,
+        'words_count': 2,
         }
 
   with open(output_json, 'w') as ff:

@@ -60,12 +60,20 @@ def stack_bidirectional_dynamic_rnn(inputs, layer_sizes, sequence_length,
     #nd = tf.stack([range1, sequence_length - 1], 1)
     #last_outputs = tf.gather_nd(outputs, nd) # eval: 76, 600
 
-def multi_rnn(num_units, layers_size, dropout_keep_prob):
+def simple_rnn(inputs, num_units, sequence_length, dropout_keep_prob=1.0):
+    cell = tf.nn.rnn_cell.LSTMCell(num_units=num_units, state_is_tuple=True)
+    if dropout_keep_prob is not None:
+        cell = tf.nn.rnn_cell.DropoutWrapper(cell=cell, output_keep_prob=dropout_keep_prob)
+    outputs, state = tf.nn.dynamic_rnn(cell, inputs,
+            sequence_length=sequence_length, dtype=tf.float32)
+    return state.h
+
+def multi_rnn(inputs, num_units, layers_size, sequence_length, dropout_keep_prob=1.0):
     cell = tf.nn.rnn_cell.LSTMCell(num_units=num_units, state_is_tuple=True)
     cell = tf.nn.rnn_cell.DropoutWrapper(cell=cell, output_keep_prob=dropout_keep_prob)
     cell = tf.nn.rnn_cell.MultiRNNCell(cells=[cell] * layers_size, state_is_tuple=True)
-    outputs, states = tf.nn.dynamic_rnn(cell, content_embeddings,
-            sequence_length=content_lengths, dtype=tf.float32)
+    outputs, states = tf.nn.dynamic_rnn(cell, inputs,
+            sequence_length=sequence_length, dtype=tf.float32)
     #last_outputs = tf.concat([states[0][-1].h, states[-1]], 1)
     return states[0][-1].h
 

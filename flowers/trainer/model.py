@@ -28,7 +28,7 @@ from tensorflow.python.saved_model import signature_def_utils
 from tensorflow.python.saved_model import tag_constants
 from tensorflow.python.saved_model import utils as saved_model_utils
 
-from rnn import stack_bidirectional_dynamic_rnn
+from rnn import stack_bidirectional_dynamic_rnn, simple_rnn
 
 import util
 from util import override_if_not_in_args
@@ -342,9 +342,11 @@ class Model(object):
       content_embeddings = tf.reshape(content_embeddings, [-1, MAX_WORDS_COUNT, CONTENT_DIM])
       content_lengths = tf.reshape(content_lengths, [-1])
 
-      layer_sizes = [RNN_UNIT_SIZE]
-      last_outputs = stack_bidirectional_dynamic_rnn(
-              content_embeddings, layer_sizes, content_lengths,
+      #layer_sizes = [RNN_UNIT_SIZE]
+      #last_outputs = stack_bidirectional_dynamic_rnn(
+      #        content_embeddings, layer_sizes, content_lengths,
+      #        dropout_keep_prob=dropout_keep_prob)
+      last_outputs = simple_rnn(content_embeddings, RNN_UNIT_SIZE, content_lengths,
               dropout_keep_prob=dropout_keep_prob)
       last_outputs = layers.fully_connected(last_outputs, RNN_UNIT_SIZE)
 
@@ -367,7 +369,7 @@ class Model(object):
           embeddings,
           all_labels_count,
           hidden_layer_size=hidden_layer_size,
-          dropout_keep_prob=self.dropout if is_training else None)
+          dropout_keep_prob=dropout_keep_prob)
 
     # Prediction is the index of the label with the highest score. We are
     # interested only in the top score.
