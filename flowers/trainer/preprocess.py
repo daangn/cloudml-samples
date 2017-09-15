@@ -88,10 +88,10 @@ from tensorflow.python.framework import errors
 from tensorflow.python.lib.io import file_io
 
 try:
-  from model import BOTTLENECK_TENSOR_SIZE
+  from model import BOTTLENECK_TENSOR_SIZE, CONTENT_DIM, CONTENT_EMB_LENGTH
   from model import get_extra_embeddings, GraphReferences
 except ImportError:
-  from trainer.model import BOTTLENECK_TENSOR_SIZE
+  from trainer.model import BOTTLENECK_TENSOR_SIZE, CONTENT_DIM, CONTENT_EMB_LENGTH
   from trainer.model import get_extra_embeddings, GraphReferences
 
 
@@ -121,8 +121,7 @@ class Default(object):
   # inception graph or when a newer checkpoint file is available. See
   # https://research.googleblog.com/2016/08/improving-inception-and-image.html
   IMAGE_GRAPH_CHECKPOINT_URI = (
-      'data/inception_v3_2016_08_28.ckpt')
-  #    'gs://cloud-ml-data/img/flower_photos/inception_v3_2016_08_28.ckpt')
+      'gs://cloud-ml-data/img/flower_photos/inception_v3_2016_08_28.ckpt')
 
 
 class ExtractTextDataDoFn(beam.DoFn):
@@ -371,6 +370,7 @@ class TFExampleFromImageDoFn(beam.DoFn):
   """
 
   def __init__(self, graph=None, preprocess_graph=None):
+    self.tf_session = None
     self.graph = None
     self.preprocess_graph = None
 
@@ -379,11 +379,11 @@ class TFExampleFromImageDoFn(beam.DoFn):
     # The same instance of session is re-used between bundles.
     # Session is closed by the destructor of Session object, which is called
     # when instance of TFExampleFromImageDoFn() is destructed.
-    if not self.graph and False:
+    if not self.graph:
       self.graph = tf.Graph()
-      tf_session = tf.InteractiveSession(graph=self.graph)
+      self.tf_session = tf.InteractiveSession(graph=self.graph)
       with self.graph.as_default():
-        self.preprocess_graph = EmbeddingsGraph(tf_session)
+        self.preprocess_graph = EmbeddingsGraph(self.tf_session)
 
     self.data_map = {}
 
@@ -455,10 +455,6 @@ class TFExampleFromImageDoFn(beam.DoFn):
     yield example
 
 def get_seq_data():
-    CONTENT_DIM = 128
-    MAX_WORDS_COUNT = 200
-    #MAX_WORDS_COUNT = 768
-    CONTENT_EMB_LENGTH = CONTENT_DIM * MAX_WORDS_COUNT
     items = []
     lens = []
     with open('data/content_embs.txt') as f:
