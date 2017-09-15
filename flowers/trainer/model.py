@@ -33,8 +33,6 @@ from rnn import stack_bidirectional_dynamic_rnn
 import util
 from util import override_if_not_in_args
 
-from attention import attention
-
 slim = tf.contrib.slim
 
 LOGITS_TENSOR_NAME = 'logits_tensor'
@@ -131,8 +129,8 @@ class GraphReferences(object):
     self.input_images_count = None
     self.input_created_at_ts = None
     self.input_offerable = None
-    self.input_content_embeddings = None
-    self.input_content_lengths = None
+    self.input_word_embeddings = None
+    self.input_words_count = None
 
 
 def get_extra_embeddings(tensors):
@@ -288,11 +286,11 @@ class Model(object):
       embeddings = inception_embeddings
       text_embeddings = tf.placeholder(tf.float32, shape=[None, TEXT_EMBEDDING_SIZE])
       content_embeddings = tf.placeholder(tf.float32, shape=[None, CONTENT_EMB_LENGTH])
-      content_lengths = tf.placeholder(tf.int64, shape=[None])
+      content_lengths = tf.placeholder(tf.int32, shape=[None])
       tensors.input_jpeg = inception_input
       tensors.input_text = text_embeddings
-      tensors.input_content_embeddings = content_embeddings
-      tensors.input_content_lengths = content_lengths
+      tensors.input_word_embeddings = content_embeddings
+      tensors.input_words_count = content_lengths
 
       extra_embeddings = get_extra_embeddings(tensors)
     else:
@@ -466,6 +464,8 @@ class Model(object):
         'images_count': tensors.input_images_count,
         'created_at_ts': tensors.input_created_at_ts,
         'offerable': tensors.input_offerable,
+        'word_embeddings': tensors.input_word_embeddings,
+        'words_count': tensors.input_words_count,
     }
 
     # To extract the id, we need to add the identity function.
