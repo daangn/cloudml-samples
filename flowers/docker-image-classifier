@@ -6,4 +6,4 @@ docker run --rm -it -v $(pwd):/app \
            -v "${RAILS_ROOT}/tmp/cache/commercial_text/data/content_embs.txt":/app/data/content_embs.txt \
            -v "${RAILS_ROOT}/tmp/cache/commercial_text/data/ids.txt":/app/data/ids.txt \
            -p 6006:6006 \
-           daangn/cloud-ml:169 /bin/bash
+           daangn/cloud-ml:170.0.1 /bin/bash
