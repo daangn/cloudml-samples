@@ -131,6 +131,8 @@ class GraphReferences(object):
     self.input_images_count = None
     self.input_created_at_ts = None
     self.input_offerable = None
+    self.input_content_embeddings = None
+    self.input_content_lengths = None
 
 
 def get_extra_embeddings(tensors):
@@ -285,8 +287,12 @@ class Model(object):
       # For training, we use pre-processed data, so it is not needed.
       embeddings = inception_embeddings
       text_embeddings = tf.placeholder(tf.float32, shape=[None, TEXT_EMBEDDING_SIZE])
+      content_embeddings = tf.placeholder(tf.float32, shape=[None, CONTENT_EMB_LENGTH])
+      content_lengths = tf.placeholder(tf.int64, shape=[None])
       tensors.input_jpeg = inception_input
       tensors.input_text = text_embeddings
+      tensors.input_content_embeddings = content_embeddings
+      tensors.input_content_lengths = content_lengths
 
       extra_embeddings = get_extra_embeddings(tensors)
     else:
