@@ -317,6 +317,7 @@ class Model(object):
     # label_count+1.
     all_labels_count = self.label_count + 1
     with tf.name_scope('final_ops'):
+      embeddings = layers.fully_connected(embeddings, BOTTLENECK_TENSOR_SIZE / 8)
       embeddings = tf.concat([embeddings, text_embeddings, extra_embeddings],
           1, name='article_embedding')
       softmax, logits = self.add_final_training_ops(
