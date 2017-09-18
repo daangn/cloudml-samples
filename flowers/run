@@ -1,0 +1,7 @@
+RAILS_ROOT="$(pwd)/../../hoian-webapp/tmp/cache"
+docker run --rm -it --volumes-from gcloud-config \
+         -v $(pwd):/app \
+         -v "${RAILS_ROOT}/category_images":/app/data/category_images \
+         -v "${RAILS_ROOT}/commercial_text/data/emb.csv":/app/data/emb.csv \
+         --entrypoint /app/retrain_local \
+         daangn/cloud-ml:170.0.1 $@
