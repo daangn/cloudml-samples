@@ -22,6 +22,9 @@ echo
 echo "Using job id: " $JOB_ID
 
 if [[ $CMD == 'pre' ]]; then
+  echo "Fetch image embedding files"
+  python fetch_image_embeddings.py
+
   echo "Generate csv files"
   rm -f data/train_set*.csv data/eval_set*.csv
   python gen_csv.py --data_dir=data/category_images

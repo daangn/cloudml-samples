@@ -12,11 +12,12 @@ def remove(id):
 
 def down(id):
     shard = id / 10000
-    to_path = "%s/%s/" % (emb_path, shard)
+    to_path = "%s/%d" % (emb_path, shard)
     if not os.path.exists(to_path):
         os.mkdir(to_path)
-    from_path = '~/faiss-image-server/embeddings/%d/%d.emb' % (shard, id)
-    return call(['scp', 'dg.ml:%s' % from_path, to_path])
+    to_path = "%s/%d.emb" % (to_path, id)
+    url = 'http://ml.daangn.com/articles/image_embeddings/%d/%d.emb' % (shard, id)
+    return call(['curl', '-f', '-o', to_path, url])
 
 def main():
     with open('data/emb.csv') as f:
