@@ -46,14 +46,14 @@ def parse_args():
                       help='Will resize images locally first.  Not needed, but'
                       ' will reduce network traffic.')
   parser.add_argument('inputs', nargs='+', type=argparse.FileType('r'),
-                      help='A list of .jpg or .jpeg files to serialize into a '
+                      help='A list of .emb files to serialize into a '
                       'request json')
 
   args = parser.parse_args()
 
-  check = lambda filename: filename.lower().endswith(('jpeg', 'jpg'))
+  check = lambda filename: filename.lower().endswith(('emb'))
   if not all(check(input_file.name) for input_file in args.inputs):
-    sys.stderr.write('All inputs must be .jpeg or .jpg')
+    sys.stderr.write('All inputs must be .emb')
     sys.exit(1)
 
   return args
@@ -96,19 +96,8 @@ def make_request_json(input_images, output_json, do_resize):
       id = int(tokens[0])
       data = data_map[id]
 
-      image = Image.open(image_handle.name)
-      image_handle.close()
-      resized_handle = StringIO()
-      is_too_big = ((image.size[0] * image.size[1]) >
-                    (desired_width * desired_height))
-      if do_resize and is_too_big:
-        image = image.resize((299, 299), Image.BILINEAR)
-
-      image.save(resized_handle, format='JPEG')
-      encoded_contents = base64.b64encode(resized_handle.getvalue())
-
-      # key can be any UTF-8 string, since it goes in a HTTP request.
-      new_data = {'image_bytes': {'b64': encoded_contents}}
+      encoded_contents = base64.b64encode(image_handle.read())
+      new_data = {'image_embedding_bytes': {'b64': encoded_contents}}
       new_data.update(data)
       row = json.dumps(new_data)
 

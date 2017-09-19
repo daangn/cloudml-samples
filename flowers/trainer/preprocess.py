@@ -117,12 +117,6 @@ class Default(object):
   """Default values of variables."""
   FORMAT = 'jpeg'
 
-  # Make sure to update the default checkpoint file if using another
-  # inception graph or when a newer checkpoint file is available. See
-  # https://research.googleblog.com/2016/08/improving-inception-and-image.html
-  IMAGE_GRAPH_CHECKPOINT_URI = (
-      'gs://cloud-ml-data/img/flower_photos/inception_v3_2016_08_28.ckpt')
-
 
 class ExtractLabelIdsDoFn(beam.DoFn):
   """Extracts (uri, label_ids) tuples from CSV rows.
@@ -354,9 +348,6 @@ def default_args(argv):
       help='See Dataflow runners, may be blocking'
       ' or not, on cloud or not, etc.')
   parser.add_argument(
-      '--checkpoint_path', type=str,
-      help='Path to the checkpoint file.')
-  parser.add_argument(
       '--text_data_path', type=str,
       help='Path to the text data file.')
   parser.add_argument(
@@ -384,9 +375,6 @@ def default_args(argv):
         'runner': 'DirectRunner',
     }
     logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
-
-  if parsed_args.checkpoint_path:
-    Default.IMAGE_GRAPH_CHECKPOINT_URI = (parsed_args.checkpoint_path)
 
 
   for kk, vv in default_values.iteritems():

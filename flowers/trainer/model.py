@@ -19,8 +19,6 @@ import logging
 
 import tensorflow as tf
 from tensorflow.contrib import layers
-#from tensorflow.contrib.slim.python.slim.nets import inception_v3 as inception
-from nets import inception_v4 as inception
 
 from tensorflow.python.saved_model import builder as saved_model_builder
 from tensorflow.python.saved_model import signature_constants
@@ -37,10 +35,6 @@ LOGITS_TENSOR_NAME = 'logits_tensor'
 IMAGE_URI_COLUMN = 'image_uri'
 LABEL_COLUMN = 'label'
 EMBEDDING_COLUMN = 'embedding'
-
-# Path to a default checkpoint file for the Inception graph.
-DEFAULT_INCEPTION_CHECKPOINT = (
-    'gs://cloud-ml-data/img/flower_photos/inception_v3_2016_08_28.ckpt')
 
 TOTAL_CATEGORIES_COUNT = 33
 MAX_PRICE = 10000000.0
@@ -90,10 +84,6 @@ def create_model():
   # during preprocessing.
   parser.add_argument('--label_count', type=int, default=5)
   parser.add_argument('--dropout', type=float, default=0.5)
-  parser.add_argument(
-      '--inception_checkpoint_file',
-      type=str,
-      default=DEFAULT_INCEPTION_CHECKPOINT)
   args, task_args = parser.parse_known_args()
   override_if_not_in_args('--max_steps', '1000', task_args)
   override_if_not_in_args('--batch_size', '100', task_args)
@@ -101,8 +91,7 @@ def create_model():
   override_if_not_in_args('--eval_interval_secs', '2', task_args)
   override_if_not_in_args('--log_interval_secs', '2', task_args)
   override_if_not_in_args('--min_train_eval_rate', '2', task_args)
-  return Model(args.label_count, args.dropout,
-               args.inception_checkpoint_file), task_args
+  return Model(args.label_count, args.dropout), task_args
 
 
 class GraphReferences(object):
@@ -116,7 +105,7 @@ class GraphReferences(object):
     self.metric_values = []
     self.keys = None
     self.predictions = []
-    self.input_jpeg = None
+    self.input_image = None
     self.input_text = None
     self.input_category_id = None
     self.input_price = None
@@ -159,10 +148,9 @@ def get_extra_embeddings(tensors):
 class Model(object):
   """TensorFlow model for the flowers problem."""
 
-  def __init__(self, label_count, dropout, inception_checkpoint_file):
+  def __init__(self, label_count, dropout):
     self.label_count = label_count
     self.dropout = dropout
-    self.inception_checkpoint_file = inception_checkpoint_file
 
   def add_final_training_ops(self,
                              embeddings,
@@ -199,60 +187,15 @@ class Model(object):
     return softmax, logits
 
   def build_inception_graph(self):
-    """Builds an inception graph and add the necessary input & output tensors.
-
-      To use other Inception models modify this file. Also preprocessing must be
-      modified accordingly.
-
-      See tensorflow/contrib/slim/python/slim/nets/inception_v3.py for
-      details about InceptionV3.
-
-    Returns:
-      input_jpeg: A placeholder for jpeg string batch that allows feeding the
-                  Inception layer with image bytes for prediction.
-      inception_embeddings: The embeddings tensor.
-    """
-
-    # These constants are set by Inception v3's expectations.
-    height = 299
-    width = 299
-    channels = 3
-
     image_str_tensor = tf.placeholder(tf.string, shape=[None])
 
-    # The CloudML Prediction API always "feeds" the Tensorflow graph with
-    # dynamic batch sizes e.g. (?,).  decode_jpeg only processes scalar
-    # strings because it cannot guarantee a batch of images would have
-    # the same output size.  We use tf.map_fn to give decode_jpeg a scalar
-    # string from dynamic batches.
-    def decode_and_resize(image_str_tensor):
-      """Decodes jpeg string, resizes it and returns a uint8 tensor."""
-      image = tf.image.decode_jpeg(image_str_tensor, channels=channels)
-      # Note resize expects a batch_size, but tf_map supresses that index,
-      # thus we have to expand then squeeze.  Resize returns float32 in the
-      # range [0, uint8_max]
-      image = tf.expand_dims(image, 0)
-      image = tf.image.resize_bilinear(
-          image, [height, width], align_corners=False)
-      image = tf.squeeze(image, squeeze_dims=[0])
-      image = tf.cast(image, dtype=tf.uint8)
-      return image
+    def decode(image_str_tensor):
+        embeddings = tf.decode_raw(image_str_tensor, tf.float32)
+        return embeddings
 
-    image = tf.map_fn(
-        decode_and_resize, image_str_tensor, back_prop=False, dtype=tf.uint8)
-    # convert_image_dtype, also scales [0, uint8_max] -> [0 ,1).
-    image = tf.image.convert_image_dtype(image, dtype=tf.float32)
-
-    # Then shift images to [-1, 1) for Inception.
-    image = tf.subtract(image, 0.5)
-    image = tf.multiply(image, 2.0)
-
-    # Build Inception layers, which expect A tensor of type float from [-1, 1)
-    # and shape [batch_size, height, width, channels].
-    with slim.arg_scope(inception.inception_v4_arg_scope()):
-      _, end_points = inception.inception_v4(image, is_training=False)
-
-    inception_embeddings = end_points['PreLogitsFlatten']
+    inception_embeddings = tf.map_fn(
+        decode, image_str_tensor, back_prop=False, dtype=tf.float32)
+    inception_embeddings = tf.reshape(inception_embeddings, [-1, BOTTLENECK_TENSOR_SIZE])
     return image_str_tensor, inception_embeddings
 
   def build_graph(self, data_paths, batch_size, graph_mod):
@@ -270,12 +213,9 @@ class Model(object):
 
     if graph_mod == GraphMod.PREDICT:
       inception_input, inception_embeddings = self.build_inception_graph()
-      # Build the Inception graph. We later add final training layers
-      # to this graph. This is currently used only for prediction.
-      # For training, we use pre-processed data, so it is not needed.
       embeddings = inception_embeddings
       text_embeddings = tf.placeholder(tf.float32, shape=[None, TEXT_EMBEDDING_SIZE])
-      tensors.input_jpeg = inception_input
+      tensors.input_image = inception_input
       tensors.input_text = text_embeddings
 
       extra_embeddings = get_extra_embeddings(tensors)
@@ -328,7 +268,7 @@ class Model(object):
     # Prediction is the index of the label with the highest score. We are
     # interested only in the top score.
     prediction = tf.argmax(softmax, 1)
-    tensors.predictions = [prediction, softmax, embeddings]
+    tensors.predictions = [prediction, softmax]
 
     if graph_mod == GraphMod.PREDICT:
       return tensors
@@ -361,8 +301,7 @@ class Model(object):
   def build_eval_graph(self, data_paths, batch_size):
     return self.build_graph(data_paths, batch_size, GraphMod.EVALUATE)
 
-  def restore_from_checkpoint(self, session, inception_checkpoint_file,
-                              trained_checkpoint_file):
+  def restore_from_checkpoint(self, session, trained_checkpoint_file):
     """To restore model variables from the checkpoint file.
 
        The graph is assumed to consist of an inception model and other
@@ -371,38 +310,14 @@ class Model(object):
        we restore this from two checkpoint files.
     Args:
       session: The session to be used for restoring from checkpoint.
-      inception_checkpoint_file: Path to the checkpoint file for the Inception
-                                 graph.
       trained_checkpoint_file: path to the trained checkpoint for the other
                                layers.
     """
-    inception_exclude_scopes = [
-        'InceptionV4/AuxLogits', 'InceptionV4/Logits', 'global_step',
-        'final_ops'
-    ]
-    reader = tf.train.NewCheckpointReader(inception_checkpoint_file)
-    var_to_shape_map = reader.get_variable_to_shape_map()
-
-    # Get all variables to restore. Exclude Logits and AuxLogits because they
-    # depend on the input data and we do not need to intialize them.
-    all_vars = tf.contrib.slim.get_variables_to_restore(
-        exclude=inception_exclude_scopes)
-    # Remove variables that do not exist in the inception checkpoint (for
-    # example the final softmax and fully-connected layers).
-    inception_vars = {
-        var.op.name: var
-        for var in all_vars if var.op.name in var_to_shape_map
-    }
-    inception_saver = tf.train.Saver(inception_vars)
-    inception_saver.restore(session, inception_checkpoint_file)
-
     if not trained_checkpoint_file:
       return
 
     # Restore the rest of the variables from the trained checkpoint.
-    trained_vars = tf.contrib.slim.get_variables_to_restore(
-        exclude=inception_exclude_scopes + inception_vars.keys())
-    trained_saver = tf.train.Saver(trained_vars)
+    trained_saver = tf.train.Saver()
     trained_saver.restore(session, trained_checkpoint_file)
 
   def build_prediction_graph(self):
@@ -413,7 +328,7 @@ class Model(object):
     keys_placeholder = tf.placeholder(tf.string, shape=[None])
     inputs = {
         'key': keys_placeholder,
-        'image_bytes': tensors.input_jpeg,
+        'image_embedding_bytes': tensors.input_image,
         'text_embedding': tensors.input_text,
         'category_id': tensors.input_category_id,
         'price': tensors.input_price,
@@ -445,8 +360,7 @@ class Model(object):
       inputs, outputs = self.build_prediction_graph()
       init_op = tf.global_variables_initializer()
       sess.run(init_op)
-      self.restore_from_checkpoint(sess, self.inception_checkpoint_file,
-                                   last_checkpoint)
+      self.restore_from_checkpoint(sess, last_checkpoint)
       signature_def = build_signature(inputs=inputs, outputs=outputs)
       signature_def_map = {
           signature_constants.DEFAULT_SERVING_SIGNATURE_DEF_KEY: signature_def
