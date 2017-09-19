@@ -13,7 +13,8 @@ declare -r BUCKET="gs://${PROJECT}-ml"
 declare -r GCS_PATH="jobs/${JOB_ID}"
 declare -r DATA_PATH="data"
 declare -r DICT_FILE="${DATA_PATH}/article_dict.txt"
-declare -r CHECKPOINT_FILE="${DATA_PATH}/inception_v3_2016_08_28.ckpt"
+#declare -r CHECKPOINT_FILE="${DATA_PATH}/inception_v3_2016_08_28.ckpt"
+declare -r CHECKPOINT_FILE="${DATA_PATH}/inception_v4.ckpt"
 
 declare -r MODEL_NAME=image_classifier2
 
@@ -59,6 +60,7 @@ elif [[ $CMD == 'train' ]] || [[ $CMD == 'train_test' ]]; then
 
   echo "Training on local is quick after preprocessing."
   echo "Labels count: $LABEL_COUNT"
+  echo "train paths: $TRAIN_PATHS"
 
   rm -rf "${GCS_PATH}/training"
 
@@ -71,7 +73,7 @@ elif [[ $CMD == 'train' ]] || [[ $CMD == 'train_test' ]]; then
     --output_path "${GCS_PATH}/training" \
     --eval_data_paths "${GCS_PATH}/preproc/eval*" \
     --train_data_paths "${TRAIN_PATHS}" \
-    --dropout 0.9 \
+    --dropout 0.5 \
     --inception_checkpoint_file "$CHECKPOINT_FILE"
 
 elif [[ $CMD == 'predict' ]]; then
@@ -105,6 +107,7 @@ elif [[ $CMD == 'publish' ]]; then
   gcloud ml-engine versions create "$VERSION_NAME" \
     --model "$MODEL_NAME" \
     --staging-bucket "$BUCKET" \
+    --runtime-version=1.2 \
     --origin "${GCS_PATH}/training/model"
 
 elif [[ $CMD == 'set' ]]; then

@@ -19,7 +19,8 @@ import logging
 
 import tensorflow as tf
 from tensorflow.contrib import layers
-from tensorflow.contrib.slim.python.slim.nets import inception_v3 as inception
+#from tensorflow.contrib.slim.python.slim.nets import inception_v3 as inception
+from nets import inception_v4 as inception
 
 from tensorflow.python.saved_model import builder as saved_model_builder
 from tensorflow.python.saved_model import signature_constants
@@ -46,7 +47,7 @@ MAX_PRICE = 10000000.0
 MAX_IMAGES_COUNT = 10.0
 DAY_TIME = 60.0 * 60 * 24
 
-BOTTLENECK_TENSOR_SIZE = 2048
+BOTTLENECK_TENSOR_SIZE = 1536
 TEXT_EMBEDDING_SIZE = 10
 FEATURES_COUNT = 10
 EXTRA_EMBEDDING_SIZE = FEATURES_COUNT + TOTAL_CATEGORIES_COUNT
@@ -166,7 +167,7 @@ class Model(object):
   def add_final_training_ops(self,
                              embeddings,
                              all_labels_count,
-                             hidden_layer_size=(BOTTLENECK_TENSOR_SIZE + TEXT_EMBEDDING_SIZE + EXTRA_EMBEDDING_SIZE) / 4,
+                             hidden_layer_size=BOTTLENECK_TENSOR_SIZE / 4,
                              dropout_keep_prob=None):
     """Adds a new softmax and fully-connected layer for training.
 
@@ -248,12 +249,10 @@ class Model(object):
 
     # Build Inception layers, which expect A tensor of type float from [-1, 1)
     # and shape [batch_size, height, width, channels].
-    with slim.arg_scope(inception.inception_v3_arg_scope()):
-      _, end_points = inception.inception_v3(image, is_training=False)
+    with slim.arg_scope(inception.inception_v4_arg_scope()):
+      _, end_points = inception.inception_v4(image, is_training=False)
 
-    inception_embeddings = end_points['PreLogits']
-    inception_embeddings = tf.squeeze(
-        inception_embeddings, [1, 2], name='SpatialSqueeze')
+    inception_embeddings = end_points['PreLogitsFlatten']
     return image_str_tensor, inception_embeddings
 
   def build_graph(self, data_paths, batch_size, graph_mod):
@@ -323,6 +322,7 @@ class Model(object):
       softmax, logits = self.add_final_training_ops(
           embeddings,
           all_labels_count,
+          hidden_layer_size=BOTTLENECK_TENSOR_SIZE / 8,
           dropout_keep_prob=self.dropout if is_training else None)
 
     # Prediction is the index of the label with the highest score. We are
@@ -377,7 +377,7 @@ class Model(object):
                                layers.
     """
     inception_exclude_scopes = [
-        'InceptionV3/AuxLogits', 'InceptionV3/Logits', 'global_step',
+        'InceptionV4/AuxLogits', 'InceptionV4/Logits', 'global_step',
         'final_ops'
     ]
     reader = tf.train.NewCheckpointReader(inception_checkpoint_file)

@@ -124,46 +124,6 @@ class Default(object):
       'gs://cloud-ml-data/img/flower_photos/inception_v3_2016_08_28.ckpt')
 
 
-class ExtractTextDataDoFn(beam.DoFn):
-  def __init__(self):
-    self.sess = None
-    self.tensors = None
-    self.extra_embeddings = None
-
-  def start_bundle(self, context=None):
-    if not self.sess:
-      self.sess = tf.Session()
-      self.tensors = GraphReferences()
-      self.extra_embeddings = get_extra_embeddings(self.tensors)
-
-  def process(self, item):
-    key = item[0]
-    try:
-      text_embedding = [float(x) for x in item[1].rstrip().split(' ')]
-    except ValueError as e:
-      logging.error("%s", item)
-      raise e
-
-    category_id = item[2]
-    price = item[3]
-    images_count = item[4]
-    created_at_ts = item[5]
-    offerable = item[6]
-
-    extra_embedding = self.sess.run(self.extra_embeddings, feed_dict={
-          self.tensors.input_price: [price],
-          self.tensors.input_images_count: [images_count],
-          self.tensors.input_offerable: [offerable],
-          self.tensors.input_created_at_ts: [created_at_ts],
-          self.tensors.input_category_id: [category_id],
-          })[0]
-
-    yield key, {
-          'text_embedding': text_embedding,
-          'extra_embedding': list(extra_embedding),
-          }
-
-
 class ExtractLabelIdsDoFn(beam.DoFn):
   """Extracts (uri, label_ids) tuples from CSV rows.
   """
@@ -198,7 +158,7 @@ class ExtractLabelIdsDoFn(beam.DoFn):
     # that were not in the dictionary.  In this sample, we simply skip it.
     # This code already supports multi-label problems if you want to use it.
     label_ids = []
-    for label in row[1:]:
+    for label in row[7:]:
       try:
         label_ids.append(self.label_to_id_map[label.strip()])
       except KeyError:
@@ -208,7 +168,7 @@ class ExtractLabelIdsDoFn(beam.DoFn):
 
     if not label_ids:
       unlabeled_image.inc()
-    yield row[0], label_ids
+    yield row, label_ids
 
 
 class ReadImageAndConvertToJpegDoFn(beam.DoFn):
@@ -220,174 +180,78 @@ class ReadImageAndConvertToJpegDoFn(beam.DoFn):
 
   def process(self, element):
     try:
-      uri, label_ids = element.element
+      row, label_ids = element.element
     except AttributeError:
-      uri, label_ids = element
+      row, label_ids = element
 
-    cache_filepath = "%s.emb" % uri
-    if file_io.file_exists(cache_filepath):
-      try:
-        embedding = np.fromstring(
-            file_io.read_file_to_string(cache_filepath),
-            dtype=np.float32)
-        embedding = embedding.reshape((1, 1, 1, BOTTLENECK_TENSOR_SIZE))
-        yield uri, label_ids, None, embedding
+    id = int(row[0])
+    shard = id / 10000
+    emb_filepath = "data/image_embeddings/%d/%d.emb" % (shard, id)
+    if not file_io.file_exists(emb_filepath):
+        logging.warning('Could not load an embedding file from %s', emb_filepath)
         return
-      except ValueError as e:
-        logging.warning('Could not load an embedding file from %s: %s', cache_filepath, str(e))
-
-    # TF will enable 'rb' in future versions, but until then, 'r' is
-    # required.
-    def _open_file_read_binary(uri):
-      try:
-        return file_io.FileIO(uri, mode='rb')
-      except errors.InvalidArgumentError:
-        return file_io.FileIO(uri, mode='r')
 
     try:
-      with _open_file_read_binary(uri) as f:
-        image_bytes = f.read()
-        img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
-
-    # A variety of different calling libraries throw different exceptions here.
-    # They all correspond to an unreadable file so we treat them equivalently.
-    except Exception as e:  # pylint: disable=broad-except
-      logging.exception('Error processing image %s: %s', uri, str(e))
+      embedding = np.fromstring(
+          file_io.read_file_to_string(emb_filepath),
+          dtype=np.float32)
+      embedding = embedding.reshape((1, 1, 1, BOTTLENECK_TENSOR_SIZE))
+      yield row, label_ids, embedding
+    except ValueError as e:
+      logging.error('Could not load an embedding file from %s: %s', emb_filepath, str(e))
       error_count.inc()
-      return
-
-    # Convert to desired format and output.
-    output = io.BytesIO()
-    img.save(output, Default.FORMAT)
-    image_bytes = output.getvalue()
-    yield uri, label_ids, image_bytes, None
 
 
-class EmbeddingsGraph(object):
-  """Builds a graph and uses it to extract embeddings from images.
-  """
+class ExtractTextDataDoFn(beam.DoFn):
+  def __init__(self):
+    self.sess = None
+    self.tensors = None
+    self.extra_embeddings = None
 
-  # These constants are set by Inception v3's expectations.
-  WIDTH = 299
-  HEIGHT = 299
-  CHANNELS = 3
+  def start_bundle(self, context=None):
+    if not self.sess:
+      self.sess = tf.Session()
+      self.tensors = GraphReferences()
+      self.extra_embeddings = get_extra_embeddings(self.tensors)
 
-  def __init__(self, tf_session):
-    self.tf_session = tf_session
-    # input_jpeg is the tensor that contains raw image bytes.
-    # It is used to feed image bytes and obtain embeddings.
-    self.input_jpeg, self.embedding = self.build_graph()
+  def process(self, element):
+    try:
+      item, label_ids, embedding = element.element
+    except AttributeError:
+      item, label_ids, embedding = element
 
-    init_op = tf.global_variables_initializer()
-    self.tf_session.run(init_op)
-    self.restore_from_checkpoint(Default.IMAGE_GRAPH_CHECKPOINT_URI)
+    key = item[0]
+    try:
+      text_embedding = [float(x) for x in item[1].rstrip().split(' ')]
+    except ValueError as e:
+      logging.error("%s", item)
+      raise e
 
-  def build_graph(self):
-    """Forms the core by building a wrapper around the inception graph.
+    category_id = item[2]
+    price = item[3]
+    images_count = item[4]
+    created_at_ts = item[5]
+    offerable = item[6]
 
-      Here we add the necessary input & output tensors, to decode jpegs,
-      serialize embeddings, restore from checkpoint etc.
+    extra_embedding = self.sess.run(self.extra_embeddings, feed_dict={
+          self.tensors.input_price: [price],
+          self.tensors.input_images_count: [images_count],
+          self.tensors.input_offerable: [offerable],
+          self.tensors.input_created_at_ts: [created_at_ts],
+          self.tensors.input_category_id: [category_id],
+          })[0]
 
-      To use other Inception models modify this file. Note that to use other
-      models beside Inception, you should make sure input_shape matches
-      their input. Resizing or other modifications may be necessary as well.
-      See tensorflow/contrib/slim/python/slim/nets/inception_v3.py for
-      details about InceptionV3.
-
-    Returns:
-      input_jpeg: A tensor containing raw image bytes as the input layer.
-      embedding: The embeddings tensor, that will be materialized later.
-    """
-
-    input_jpeg = tf.placeholder(tf.string, shape=None)
-    image = tf.image.decode_jpeg(input_jpeg, channels=self.CHANNELS)
-
-    # Note resize expects a batch_size, but we are feeding a single image.
-    # So we have to expand then squeeze.  Resize returns float32 in the
-    # range [0, uint8_max]
-    image = tf.expand_dims(image, 0)
-
-    # convert_image_dtype also scales [0, uint8_max] -> [0 ,1).
-    image = tf.image.convert_image_dtype(image, dtype=tf.float32)
-    image = tf.image.resize_bilinear(
-        image, [self.HEIGHT, self.WIDTH], align_corners=False)
-
-    # Then rescale range to [-1, 1) for Inception.
-    image = tf.subtract(image, 0.5)
-    inception_input = tf.multiply(image, 2.0)
-
-    # Build Inception layers, which expect a tensor of type float from [-1, 1)
-    # and shape [batch_size, height, width, channels].
-    with slim.arg_scope(inception.inception_v3_arg_scope()):
-      _, end_points = inception.inception_v3(inception_input, is_training=False)
-
-    embedding = end_points['PreLogits']
-    return input_jpeg, embedding
-
-  def restore_from_checkpoint(self, checkpoint_path):
-    """To restore inception model variables from the checkpoint file.
-
-       Some variables might be missing in the checkpoint file, so it only
-       loads the ones that are avialable, assuming the rest would be
-       initialized later.
-    Args:
-      checkpoint_path: Path to the checkpoint file for the Inception graph.
-    """
-    # Get all variables to restore. Exclude Logits and AuxLogits because they
-    # depend on the input data and we do not need to intialize them from
-    # checkpoint.
-    all_vars = tf.contrib.slim.get_variables_to_restore(
-        exclude=['InceptionV3/AuxLogits', 'InceptionV3/Logits', 'global_step'])
-
-    saver = tf.train.Saver(all_vars)
-    saver.restore(self.tf_session, checkpoint_path)
-
-  def calculate_embedding(self, batch_image_bytes):
-    """Get the embeddings for a given JPEG image.
-
-    Args:
-      batch_image_bytes: As if returned from [ff.read() for ff in file_list].
-
-    Returns:
-      The Inception embeddings (bottleneck layer output)
-    """
-    return self.tf_session.run(
-        self.embedding, feed_dict={self.input_jpeg: batch_image_bytes})
+    yield item, label_ids, embedding, {
+          'text_embedding': text_embedding,
+          'extra_embedding': list(extra_embedding),
+          }
 
 
 class TFExampleFromImageDoFn(beam.DoFn):
-  """Embeds image bytes and labels, stores them in tensorflow.Example.
-
-  (uri, label_ids, image_bytes, embedding) -> (tensorflow.Example).
-
-  Output proto contains 'label', 'image_uri' and 'embedding'.
-  The 'embedding' is calculated by feeding image into input layer of image
-  neural network and reading output of the bottleneck layer of the network.
-
-  Attributes:
-    image_graph_uri: an uri to gcs bucket where serialized image graph is
-                     stored.
-  """
-
-  def __init__(self):
-    self.tf_session = None
-    self.graph = None
-    self.preprocess_graph = None
-
   def start_bundle(self, context=None):
-    # There is one tensorflow session per instance of TFExampleFromImageDoFn.
-    # The same instance of session is re-used between bundles.
-    # Session is closed by the destructor of Session object, which is called
-    # when instance of TFExampleFromImageDoFn() is destructed.
-    if not self.graph:
-      self.graph = tf.Graph()
-      self.tf_session = tf.InteractiveSession(graph=self.graph)
-      with self.graph.as_default():
-        self.preprocess_graph = EmbeddingsGraph(self.tf_session)
-
     self.data_map = {}
 
-  def process(self, element, all_text_data):
+  def process(self, element):
 
     def _bytes_feature(value):
       return tf.train.Feature(bytes_list=tf.train.BytesList(value=value))
@@ -402,35 +266,12 @@ class TFExampleFromImageDoFn(beam.DoFn):
       element = element.element
     except AttributeError:
       pass
-    uri, label_ids, image_bytes, embedding = element
+    row, label_ids, embedding, data = element
 
-    if not self.data_map:
-      for i, item in enumerate(all_text_data):
-        self.data_map[int(item[0])] = item[1]
-
-    try:
-      if embedding is None:
-        embedding = self.preprocess_graph.calculate_embedding(image_bytes)
-        cache_filepath = "%s.emb" % uri
-        file_io.write_string_to_file(cache_filepath, embedding.tostring())
-        logging.debug("Write an embedding file to %s" % cache_filepath)
-    except errors.InvalidArgumentError as e:
-      incompatible_image.inc()
-      logging.warning('Could not encode an image from %s: %s', uri, str(e))
-      return
-
-    if embedding.any():
-      embedding_good.inc()
-    else:
-      embedding_bad.inc()
-
-    id, _ = os.path.basename(uri).split('.')
-    data = self.data_map[int(id)]
-    if not data:
-      raise ("no data for id %s" % id)
+    id = row[0]
 
     example = tf.train.Example(features=tf.train.Features(feature={
-        'image_uri': _bytes_feature([uri]),
+        'image_uri': _bytes_feature([id]),
         'embedding': _float_feature(embedding.ravel().tolist()),
         'text_embedding': _float_feature(data['text_embedding']),
         'extra_embedding': _float_feature(data['extra_embedding']),
@@ -449,13 +290,7 @@ def configure_pipeline(p, opt):
       opt.input_path, strip_trailing_newlines=True)
   read_label_source = beam.io.ReadFromText(
       opt.input_dict, strip_trailing_newlines=True)
-  read_text_data_source = beam.io.ReadFromText(
-      opt.text_data_path, strip_trailing_newlines=True, skip_header_lines=1)
   labels = (p | 'Read dictionary' >> read_label_source)
-  text_data = (p
-      | 'Read text data' >> read_text_data_source
-      | 'Parse text data' >> beam.Map(lambda line: csv.reader([line]).next())
-      | 'Extract text data' >> beam.ParDo(ExtractTextDataDoFn()))
   _ = (p
        | 'Read input' >> read_input_source
        | 'Parse input' >> beam.Map(lambda line: csv.reader([line]).next())
@@ -463,8 +298,8 @@ def configure_pipeline(p, opt):
                                            beam.pvalue.AsIter(labels))
        | 'Read and convert to JPEG'
        >> beam.ParDo(ReadImageAndConvertToJpegDoFn())
-       | 'Embed and make TFExample' >> beam.ParDo(TFExampleFromImageDoFn(),
-                                           beam.pvalue.AsIter(text_data))
+       | 'Extract text data' >> beam.ParDo(ExtractTextDataDoFn())
+       | 'Embed and make TFExample' >> beam.ParDo(TFExampleFromImageDoFn())
        # TODO(b/35133536): Get rid of this Map and instead use
        # coder=beam.coders.ProtoCoder(tf.train.Example) in WriteToTFRecord
        # below.
