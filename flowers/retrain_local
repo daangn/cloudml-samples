@@ -124,26 +124,6 @@ elif [[ $CMD == 'set' ]]; then
 
   echo "RAILS_ENV=production bundle exec cap production ml:publish_article_model"
 
-elif [[ $CMD == 'export_emb' ]]; then
-  rm -rf "${GCS_PATH}/embeddings"
-  gcloud ml-engine local train \
-    --module-name trainer.task \
-    --package-path trainer \
-    -- \
-    --export_embeddings \
-    --output_path "${GCS_PATH}/embeddings" \
-    --inception_checkpoint_file "$CHECKPOINT_FILE"
-
-elif [[ $CMD == 'publish_emb' ]]; then
-  echo "Publish the trained model."
-  declare -r VERSION_NAME=$2
-  echo "Version: " $VERSION_NAME
-
-  gcloud ml-engine versions create "$VERSION_NAME" \
-    --model "$MODEL_NAME" \
-    --staging-bucket "$BUCKET" \
-    --origin "${GCS_PATH}/embeddings/model"
-
 elif [[ $CMD == 'tb' ]]; then
 
   tensorboard --logdir="${GCS_PATH}/training"
