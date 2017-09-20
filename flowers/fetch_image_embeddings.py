@@ -21,7 +21,8 @@ def down(id):
 
 def main():
     with open('data/emb.csv') as f:
-        new_ids = set([int(line.split(',')[0]) for line in f.readlines()[1:]])
+        rows = [line.split(',') for line in f.readlines()[1:]]
+        new_ids = set([int(row[0]) for row in rows if row[4] != '0'])
 
     pathes = glob.glob('%s/*/*.emb' % emb_path)
     local_ids = set([int(x.split('/')[-1][:-4]) for x in pathes])

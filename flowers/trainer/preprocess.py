@@ -171,6 +171,7 @@ class ReadImageAndConvertToJpegDoFn(beam.DoFn):
   We do this even for JPEG images to remove variations such as different number
   of channels.
   """
+  SHAPE = [1, 1, 1, BOTTLENECK_TENSOR_SIZE]
 
   def process(self, element):
     try:
@@ -182,14 +183,13 @@ class ReadImageAndConvertToJpegDoFn(beam.DoFn):
     shard = id / 10000
     emb_filepath = "data/image_embeddings/%d/%d.emb" % (shard, id)
     if not file_io.file_exists(emb_filepath):
-        logging.warning('Could not load an embedding file from %s', emb_filepath)
-        return
+        emb_filepath = 'data/empty.emb'
 
     try:
       embedding = np.fromstring(
           file_io.read_file_to_string(emb_filepath),
           dtype=np.float32)
-      embedding = embedding.reshape((1, 1, 1, BOTTLENECK_TENSOR_SIZE))
+      embedding = embedding.reshape(self.SHAPE)
       yield row, label_ids, embedding
     except ValueError as e:
       logging.error('Could not load an embedding file from %s: %s', emb_filepath, str(e))
