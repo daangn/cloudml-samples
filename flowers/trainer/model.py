@@ -258,7 +258,7 @@ class Model(object):
     with tf.name_scope('final_ops'):
       embeddings = layers.fully_connected(embeddings, BOTTLENECK_TENSOR_SIZE / 8)
       embeddings = tf.concat([embeddings, text_embeddings, extra_embeddings],
-          1, name='article_embedding')
+          1, name='article_embeddings')
       softmax, logits = self.add_final_training_ops(
           embeddings,
           all_labels_count,
@@ -285,14 +285,16 @@ class Model(object):
     # Add means across all batches.
     loss_updates, loss_op = util.loss(loss_value)
     accuracy_updates, accuracy_op = util.accuracy(logits, labels)
+    recall_op, recall_updates = tf.metrics.recall_at_k(labels, logits, 1)
 
     if not is_training:
       tf.summary.scalar('accuracy', accuracy_op)
       tf.summary.scalar('loss', loss_op)
+      tf.summary.scalar('recall', recall_op)
       tf.summary.histogram('histogram_loss', loss_op)
 
-    tensors.metric_updates = loss_updates + accuracy_updates
-    tensors.metric_values = [loss_op, accuracy_op]
+    tensors.metric_updates = loss_updates + accuracy_updates + [recall_updates]
+    tensors.metric_values = [loss_op, accuracy_op, recall_op]
     return tensors
 
   def build_train_graph(self, data_paths, batch_size):

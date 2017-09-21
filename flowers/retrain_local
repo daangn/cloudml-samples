@@ -24,7 +24,7 @@ if [[ $CMD == 'pre' ]]; then
 
   echo "Generate csv files"
   rm -f data/train_set*.csv data/eval_set*.csv
-  python gen_csv.py --data_dir=data/category_images
+  python gen_csv.py
 
   for f in `ls ${DATA_PATH}/eval_set*.csv`
   do
@@ -33,8 +33,7 @@ if [[ $CMD == 'pre' ]]; then
     python trainer/preprocess.py \
       --input_dict "$DICT_FILE" \
       --input_path "${f}" \
-      --output_path "${GCS_PATH}/preproc/eval${n}" \
-      --text_data_path "${DATA_PATH}/emb.csv"
+      --output_path "${GCS_PATH}/preproc/eval${n}"
   done
 
   for f in `ls ${DATA_PATH}/train_set*.csv`
@@ -44,8 +43,7 @@ if [[ $CMD == 'pre' ]]; then
     python trainer/preprocess.py \
       --input_dict "$DICT_FILE" \
       --input_path "${f}" \
-      --output_path "${GCS_PATH}/preproc/train${n}" \
-      --text_data_path "${DATA_PATH}/emb.csv"
+      --output_path "${GCS_PATH}/preproc/train${n}"
   done
 
 elif [[ $CMD == 'train' ]] || [[ $CMD == 'train_test' ]]; then
@@ -67,7 +65,7 @@ elif [[ $CMD == 'train' ]] || [[ $CMD == 'train_test' ]]; then
     --package-path trainer \
     -- \
     --label_count $LABEL_COUNT \
-    --max_steps 1400 \
+    --max_steps 1500 \
     --output_path "${GCS_PATH}/training" \
     --eval_data_paths "${GCS_PATH}/preproc/eval*" \
     --train_data_paths "${TRAIN_PATHS}" \

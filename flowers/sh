@@ -1,5 +1,6 @@
 RAILS_ROOT="$(pwd)/../../hoian-webapp/tmp/cache"
 docker run --rm -it --volumes-from gcloud-config \
+         -p 6006:6006 \
          -v $(pwd):/app \
          -v "${RAILS_ROOT}/commercial_text/data/emb.csv":/app/data/emb.csv \
          --entrypoint /bin/bash \

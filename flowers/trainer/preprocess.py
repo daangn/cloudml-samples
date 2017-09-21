@@ -348,9 +348,6 @@ def default_args(argv):
       help='See Dataflow runners, may be blocking'
       ' or not, on cloud or not, etc.')
   parser.add_argument(
-      '--text_data_path', type=str,
-      help='Path to the text data file.')
-  parser.add_argument(
       '--extra_package', default='./dist/trainer-0.1.1.tar.gz', type=str,
       help='Path to the extra package path.')
 
