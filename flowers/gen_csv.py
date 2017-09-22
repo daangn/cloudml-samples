@@ -26,8 +26,6 @@ y = [x.split(',')[7].rstrip() for x in X]
 
 X = np.array(X)
 y = np.array(y)
-print(X)
-print(y)
 
 print('All y counter')
 print(Counter(y).most_common())
@@ -38,17 +36,19 @@ train_index, test_index = next(sss.split(X, y))
 trains = zip(X[train_index], y[train_index])
 evals = zip(X[test_index], y[test_index])
 
+assert len(set(test_index) - set(train_index)) == len(test_index)
+
 print('train y counter')
 print(Counter(y[train_index]).most_common())
 print('test y counter')
 print(Counter(y[test_index]).most_common())
 
-for i, chunk_trains in enumerate(chunks(trains, CHUNK_SIZE)):
+for i, chunked in enumerate(chunks(trains, CHUNK_SIZE)):
   with open("data/train_set%d.csv" % i, 'w') as f:
-    for x, _ in chunk_trains:
+    for x, _ in chunked:
       f.write("%s" % x)
 
-for i, chunk_evals in enumerate(chunks(evals, CHUNK_SIZE)):
+for i, chunked in enumerate(chunks(evals, CHUNK_SIZE)):
   with open('data/eval_set%d.csv' % i, 'w') as f:
-    for x, _ in chunk_trains:
+    for x, _ in chunked:
       f.write("%s" % x)
