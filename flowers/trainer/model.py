@@ -286,15 +286,17 @@ class Model(object):
     loss_updates, loss_op = util.loss(loss_value)
     accuracy_updates, accuracy_op = util.accuracy(logits, labels)
     recall_op, recall_updates = tf.metrics.recall_at_k(labels, logits, 1)
+    precision_op, precision_updates = tf.metrics.sparse_precision_at_k(labels, logits, 1)
 
     if not is_training:
       tf.summary.scalar('accuracy', accuracy_op)
       tf.summary.scalar('loss', loss_op)
       tf.summary.scalar('recall', recall_op)
+      tf.summary.scalar('precision', precision_op)
       tf.summary.histogram('histogram_loss', loss_op)
 
-    tensors.metric_updates = loss_updates + accuracy_updates + [recall_updates]
-    tensors.metric_values = [loss_op, accuracy_op, recall_op]
+    tensors.metric_updates = loss_updates + accuracy_updates + [recall_updates, precision_updates]
+    tensors.metric_values = [loss_op, accuracy_op, recall_op, precision_op]
     return tensors
 
   def build_train_graph(self, data_paths, batch_size):

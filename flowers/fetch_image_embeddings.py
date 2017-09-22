@@ -1,5 +1,6 @@
 import os
 import glob
+import logging
 from subprocess import call
 from multiprocessing import Pool
 
@@ -17,6 +18,7 @@ def down(id):
         os.mkdir(to_path)
     to_path = "%s/%d.emb" % (to_path, id)
     url = 'http://ml.daangn.com/articles/image_embeddings/%d/%d.emb' % (shard, id)
+    logging.info('down: %s', url)
     return call(['curl', '-f', '-o', to_path, url])
 
 def main():
@@ -45,4 +47,5 @@ def main():
 
 
 if __name__ == '__main__':
+    logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
     main()
