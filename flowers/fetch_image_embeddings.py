@@ -1,4 +1,5 @@
 import os
+import sys
 import glob
 import logging
 from subprocess import call
@@ -15,7 +16,11 @@ def down(id):
     shard = id / 10000
     to_path = "%s/%d" % (emb_path, shard)
     if not os.path.exists(to_path):
-        os.mkdir(to_path)
+        try:
+            os.mkdir(to_path)
+        except OSError as e:
+            if e.errno != 17: # File exists
+                raise e
     to_path = "%s/%d.emb" % (to_path, id)
     url = 'http://ml.daangn.com/articles/image_embeddings/%d/%d.emb' % (shard, id)
     logging.info('down: %s', url)
