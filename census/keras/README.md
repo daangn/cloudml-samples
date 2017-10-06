@@ -51,7 +51,7 @@ You can run the Keras code locally
 
 ```
 JOB_DIR=census_keras
-TRAIN_STEPS=200
+TRAIN_STEPS=2000
 python trainer/task.py --train-files $TRAIN_FILE \
                        --eval-files $EVAL_FILE \
                        --job-dir $JOB_DIR \
@@ -92,7 +92,7 @@ gcloud ml-engine local predict --model-dir=$JOB_DIR/export \
 You can train the model on Cloud ML Engine
 
 ```
-gcloud ml-engine jobs submit training $JOB_NAME
+gcloud ml-engine jobs submit training $JOB_NAME \
                                     --stream-logs \
                                     --runtime-version 1.2 \
                                     --job-dir $JOB_DIR \
@@ -100,8 +100,8 @@ gcloud ml-engine jobs submit training $JOB_NAME
                                     --module-name trainer.task \
                                     --region us-central1 \
                                     -- \
-                                    --train-files $TRAIN_FILE \
-                                    --eval-files $EVAL_FILE \
+                                    --train-files $GCS_TRAIN_FILE \
+                                    --eval-files $GCS_EVAL_FILE \
                                     --train-steps $TRAIN_STEPS
 ```
 
