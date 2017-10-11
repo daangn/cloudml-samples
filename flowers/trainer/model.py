@@ -180,6 +180,9 @@ class Model(object):
         # We need a dropout when the size of the dataset is rather small.
         if dropout_keep_prob:
           hidden = tf.nn.dropout(hidden, dropout_keep_prob)
+        hidden = layers.fully_connected(hidden, hidden_layer_size)
+        if dropout_keep_prob:
+          hidden = tf.nn.dropout(hidden, dropout_keep_prob)
         logits = layers.fully_connected(
             hidden, all_labels_count, activation_fn=None)
 
@@ -256,14 +259,20 @@ class Model(object):
     # label_count+1.
     all_labels_count = self.label_count + 1
     with tf.name_scope('final_ops'):
+      dropout_keep_prob = self.dropout if is_training else None
       embeddings = layers.fully_connected(embeddings, BOTTLENECK_TENSOR_SIZE / 8)
+      extra_embeddings = layers.fully_connected(extra_embeddings, EXTRA_EMBEDDING_SIZE / 2,
+              normalizer_fn=tf.contrib.layers.batch_norm)
+      if dropout_keep_prob:
+          embeddings = tf.nn.dropout(embeddings, dropout_keep_prob)
+          extra_embeddings = tf.nn.dropout(extra_embeddings, dropout_keep_prob)
       embeddings = tf.concat([embeddings, text_embeddings, extra_embeddings],
           1, name='article_embeddings')
       softmax, logits = self.add_final_training_ops(
           embeddings,
           all_labels_count,
           hidden_layer_size=BOTTLENECK_TENSOR_SIZE / 8,
-          dropout_keep_prob=self.dropout if is_training else None)
+          dropout_keep_prob=dropout_keep_prob)
 
     # Prediction is the index of the label with the highest score. We are
     # interested only in the top score.

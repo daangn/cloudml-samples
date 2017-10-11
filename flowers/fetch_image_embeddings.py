@@ -24,7 +24,7 @@ def down(id):
     to_path = "%s/%d.emb" % (to_path, id)
     url = 'http://ml.daangn.com/articles/image_embeddings/%d/%d.emb' % (shard, id)
     logging.info('down: %s', url)
-    return call(['curl', '-f', '-o', to_path, url])
+    return call(['curl', '-f', '--connect-timeout', '2', '-o', to_path, url])
 
 def main():
     with open('data/emb.csv') as f:
