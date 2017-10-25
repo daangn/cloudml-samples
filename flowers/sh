@@ -1,7 +1,10 @@
 RAILS_ROOT="$(pwd)/../../hoian-webapp/tmp/cache"
+DATA_PATH="${RAILS_ROOT}/commercial_text/data"
 docker run --rm -it --volumes-from gcloud-config \
          -p 6006:6006 \
          -v $(pwd):/app \
-         -v "${RAILS_ROOT}/commercial_text/data/emb.csv":/app/data/emb.csv \
+         -v "${DATA_PATH}/emb.csv":/app/data/emb.csv \
+         -v "${DATA_PATH}/titles.emb":/app/data/titles.emb \
+         -v "${DATA_PATH}/contents.emb":/app/data/contents.emb \
          --entrypoint /bin/bash \
          daangn/cloud-ml:171

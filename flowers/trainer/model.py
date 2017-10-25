@@ -26,6 +26,9 @@ from tensorflow.python.saved_model import signature_def_utils
 from tensorflow.python.saved_model import tag_constants
 from tensorflow.python.saved_model import utils as saved_model_utils
 
+from rnn import stack_bidirectional_dynamic_rnn, simple_rnn, multi_rnn, tacotron
+from modules import encoder_cbhg
+
 import util
 from util import override_if_not_in_args
 
@@ -37,14 +40,21 @@ LABEL_COLUMN = 'label'
 EMBEDDING_COLUMN = 'embedding'
 
 TOTAL_CATEGORIES_COUNT = 33
-MAX_PRICE = 10000000.0
-MAX_IMAGES_COUNT = 10.0
+MAX_PRICE = 460000000.0
+MAX_IMAGES_COUNT = 11.0
 DAY_TIME = 60.0 * 60 * 24
 
 BOTTLENECK_TENSOR_SIZE = 1536
 TEXT_EMBEDDING_SIZE = 10
-FEATURES_COUNT = 10
+FEATURES_COUNT = 14
 EXTRA_EMBEDDING_SIZE = FEATURES_COUNT + TOTAL_CATEGORIES_COUNT
+
+RNN_UNIT_SIZE = 16
+WORD_DIM = 32
+MAX_TITLE_LENGTH = 32
+MAX_CONTENT_LENGTH = 512
+TITLE_EMBEDDING_SIZE = WORD_DIM * MAX_TITLE_LENGTH
+CONTENT_EMBEDDING_SIZE = WORD_DIM * MAX_CONTENT_LENGTH
 
 
 class GraphMod():
@@ -112,6 +122,14 @@ class GraphReferences(object):
     self.input_images_count = None
     self.input_created_at_ts = None
     self.input_offerable = None
+    self.input_title_length = None
+    self.input_title_embedding = None
+    self.input_content_length = None
+    self.input_content_embedding = None
+    self.input_title_chars_count = None
+    self.input_title_words_count = None
+    self.input_content_chars_count = None
+    self.input_content_words_count = None
 
 
 def get_extra_embeddings(tensors):
@@ -120,12 +138,20 @@ def get_extra_embeddings(tensors):
     tensors.input_images_count = tf.placeholder(tf.float32, shape=[None])
     tensors.input_created_at_ts = tf.placeholder(tf.float64, shape=[None])
     tensors.input_offerable = tf.placeholder(tf.float32, shape=[None])
+    tensors.input_title_chars_count = tf.placeholder(tf.float32, shape=[None])
+    tensors.input_title_words_count = tf.placeholder(tf.float32, shape=[None])
+    tensors.input_content_chars_count = tf.placeholder(tf.float32, shape=[None])
+    tensors.input_content_words_count = tf.placeholder(tf.float32, shape=[None])
 
     category_id = tensors.input_category_id
     price = tensors.input_price
     images_count = tensors.input_images_count
     created_at_ts = tensors.input_created_at_ts
     offerable = tensors.input_offerable
+    title_chars_count = tensors.input_title_chars_count
+    title_words_count = tensors.input_title_words_count
+    content_chars_count = tensors.input_content_chars_count
+    content_words_count = tensors.input_content_words_count
 
     category = tf.one_hot(category_id - 1, TOTAL_CATEGORIES_COUNT)
     price_norm = tf.minimum(price / MAX_PRICE, 1.0)
@@ -138,9 +164,15 @@ def get_extra_embeddings(tensors):
     created_hour = created_at_ts % DAY_TIME * 1.0 / DAY_TIME
     created_hour = tf.cast(created_hour, tf.float32)
     day = tf.cast(created_at_ts / DAY_TIME % 7 / 7.0, tf.float32)
+    title_chars_count_norm = tf.minimum(title_chars_count / 91.0, 1.0)
+    title_words_count_norm = tf.minimum(title_words_count / 15.0, 1.0)
+    content_chars_count_norm = tf.minimum(content_chars_count / 2711.0, 1.0)
+    content_words_count_norm = tf.minimum(content_words_count / 572.0, 1.0)
 
     extra_embeddings = tf.concat([price_norm, is_free, price_over_10, price_over_30,
-      price_over_50, high_price, images_count_norm, offerable, created_hour, day], 0)
+      price_over_50, high_price, images_count_norm, offerable, created_hour, day,
+      title_chars_count_norm, title_words_count_norm, content_chars_count_norm,
+      content_words_count_norm], 0)
     extra_embeddings = tf.reshape(extra_embeddings, [-1, FEATURES_COUNT])
     extra_embeddings = tf.concat([extra_embeddings, category], 1)
     return extra_embeddings
@@ -180,9 +212,9 @@ class Model(object):
         # We need a dropout when the size of the dataset is rather small.
         if dropout_keep_prob:
           hidden = tf.nn.dropout(hidden, dropout_keep_prob)
-        hidden = layers.fully_connected(hidden, hidden_layer_size)
-        if dropout_keep_prob:
-          hidden = tf.nn.dropout(hidden, dropout_keep_prob)
+        #hidden = layers.fully_connected(hidden, hidden_layer_size)
+        #if dropout_keep_prob:
+        #  hidden = tf.nn.dropout(hidden, dropout_keep_prob)
         logits = layers.fully_connected(
             hidden, all_labels_count, activation_fn=None)
 
@@ -247,6 +279,16 @@ class Model(object):
             'extra_embedding':
                 tf.FixedLenFeature(
                     shape=[EXTRA_EMBEDDING_SIZE], dtype=tf.float32),
+            'title_embedding':
+                tf.FixedLenFeature(
+                    shape=[TITLE_EMBEDDING_SIZE], dtype=tf.float32),
+            'title_length':
+                tf.FixedLenFeature(shape=[1], dtype=tf.int64),
+            'content_embedding':
+                tf.FixedLenFeature(
+                    shape=[CONTENT_EMBEDDING_SIZE], dtype=tf.float32),
+            'content_length':
+                tf.FixedLenFeature(shape=[1], dtype=tf.int64),
         }
         parsed = tf.parse_example(tensors.examples, features=feature_map)
         labels = tf.squeeze(parsed['label'])
@@ -254,20 +296,52 @@ class Model(object):
         embeddings = parsed['embedding']
         text_embeddings = parsed['text_embedding']
         extra_embeddings = parsed['extra_embedding']
+        title_lengths = parsed['title_length']
+        title_embeddings = parsed['title_embedding']
+        content_lengths = parsed['content_length']
+        content_embeddings = parsed['content_embedding']
 
     # We assume a default label, so the total number of labels is equal to
     # label_count+1.
     all_labels_count = self.label_count + 1
     with tf.name_scope('final_ops'):
       dropout_keep_prob = self.dropout if is_training else None
-      embeddings = layers.fully_connected(embeddings, BOTTLENECK_TENSOR_SIZE / 8)
+
+      title_embeddings = tf.reshape(title_embeddings, [-1, MAX_TITLE_LENGTH, WORD_DIM])
+      title_lengths = tf.reshape(title_lengths, [-1])
+      title_lengths = tf.ones_like(title_lengths)
+      layer_sizes = [32]
+      title_outputs = stack_bidirectional_dynamic_rnn(title_embeddings, layer_sizes, title_lengths,
+              dropout_keep_prob=dropout_keep_prob, attn_length=0,
+              base_cell=tf.contrib.rnn.BasicLSTMCell)
+
+      content_embeddings = tf.reshape(content_embeddings, [-1, MAX_CONTENT_LENGTH, WORD_DIM])
+      content_lengths = tf.reshape(content_lengths, [-1])
+      content_lengths = tf.ones_like(content_lengths)
+      layer_sizes = [32]
+      content_outputs = stack_bidirectional_dynamic_rnn(content_embeddings, layer_sizes, content_lengths,
+              dropout_keep_prob=dropout_keep_prob, attn_length=0,
+              base_cell=tf.contrib.rnn.LSTMBlockCell)
+
+      title_mean_embeddings = tf.reduce_sum(title_embeddings, 1) / \
+              tf.reshape(tf.cast(title_lengths, tf.float32), [-1, 1])
+      content_mean_embeddings = tf.reduce_sum(content_embeddings, 1) / \
+              tf.reshape(tf.cast(content_lengths, tf.float32), [-1, 1])
+
+      text_embeddings = tf.concat([title_mean_embeddings, content_mean_embeddings, title_outputs, content_outputs
+          ], 1)
+      #text_embeddings = layers.fully_connected(text_embeddings, 32)
+
+      #embeddings = layers.fully_connected(embeddings, BOTTLENECK_TENSOR_SIZE / 8)
       extra_embeddings = layers.fully_connected(extra_embeddings, EXTRA_EMBEDDING_SIZE / 2,
               normalizer_fn=tf.contrib.layers.batch_norm)
       if dropout_keep_prob:
-          embeddings = tf.nn.dropout(embeddings, dropout_keep_prob)
+          #embeddings = tf.nn.dropout(embeddings, dropout_keep_prob)
           extra_embeddings = tf.nn.dropout(extra_embeddings, dropout_keep_prob)
-      embeddings = tf.concat([embeddings, text_embeddings, extra_embeddings],
+          #text_embeddings = tf.nn.dropout(text_embeddings, dropout_keep_prob)
+      embeddings = tf.concat([embeddings, extra_embeddings, text_embeddings],
           1, name='article_embeddings')
+
       softmax, logits = self.add_final_training_ops(
           embeddings,
           all_labels_count,

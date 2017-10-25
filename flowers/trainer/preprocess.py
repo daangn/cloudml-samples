@@ -88,12 +88,14 @@ from tensorflow.python.framework import errors
 from tensorflow.python.lib.io import file_io
 
 try:
-  from model import BOTTLENECK_TENSOR_SIZE
+  from model import BOTTLENECK_TENSOR_SIZE, WORD_DIM, MAX_TITLE_LENGTH, MAX_CONTENT_LENGTH
   from model import get_extra_embeddings, GraphReferences
 except ImportError:
-  from trainer.model import BOTTLENECK_TENSOR_SIZE
+  from trainer.model import BOTTLENECK_TENSOR_SIZE, WORD_DIM, MAX_TITLE_LENGTH, MAX_CONTENT_LENGTH
   from trainer.model import get_extra_embeddings, GraphReferences
 
+import csv
+csv.field_size_limit(sys.maxsize)
 
 slim = tf.contrib.slim
 
@@ -152,7 +154,7 @@ class ExtractLabelIdsDoFn(beam.DoFn):
     # that were not in the dictionary.  In this sample, we simply skip it.
     # This code already supports multi-label problems if you want to use it.
     label_ids = []
-    for label in row[7:]:
+    for label in row[7:8]:
       try:
         label_ids.append(self.label_to_id_map[label.strip()])
       except KeyError:
@@ -226,6 +228,17 @@ class ExtractTextDataDoFn(beam.DoFn):
     images_count = item[4]
     created_at_ts = item[5]
     offerable = item[6]
+    title_chars_count = item[8]
+    title_words_count = item[9]
+    content_chars_count = item[10]
+    content_words_count = item[11]
+    try:
+        title_embedding, title_length = self.get_embedding_and_length(item[12], MAX_TITLE_LENGTH)
+    except Exception as e:
+        print item[0]
+        print item[12]
+        raise e
+    content_embedding, content_length = self.get_embedding_and_length(item[13], MAX_CONTENT_LENGTH)
 
     extra_embedding = self.sess.run(self.extra_embeddings, feed_dict={
           self.tensors.input_price: [price],
@@ -233,12 +246,30 @@ class ExtractTextDataDoFn(beam.DoFn):
           self.tensors.input_offerable: [offerable],
           self.tensors.input_created_at_ts: [created_at_ts],
           self.tensors.input_category_id: [category_id],
+          self.tensors.input_title_chars_count: [title_chars_count],
+          self.tensors.input_title_words_count: [title_words_count],
+          self.tensors.input_content_chars_count: [content_chars_count],
+          self.tensors.input_content_words_count: [content_words_count],
           })[0]
 
     yield item, label_ids, embedding, {
           'text_embedding': text_embedding,
           'extra_embedding': list(extra_embedding),
+          'title_embedding': title_embedding,
+          'title_length': title_length,
+          'content_embedding': content_embedding,
+          'content_length': content_length,
           }
+
+  def get_embedding_and_length(self, inline, max_length):
+      embedding = [float(x) for x in inline.split(' ')]
+      length = len(embedding) / WORD_DIM
+      if length > max_length:
+          length = max_length
+          embedding = embedding[:WORD_DIM * max_length]
+      else:
+          embedding += [0.0] * ((max_length - length) * WORD_DIM)
+      return embedding, length
 
 
 class TFExampleFromImageDoFn(beam.DoFn):
@@ -254,7 +285,7 @@ class TFExampleFromImageDoFn(beam.DoFn):
       return tf.train.Feature(float_list=tf.train.FloatList(value=value))
 
     def _int_feature(value):
-      return tf.train.Feature(float_list=tf.train.Int64List(value=value))
+      return tf.train.Feature(int64_list=tf.train.Int64List(value=value))
 
     try:
       element = element.element
@@ -269,6 +300,10 @@ class TFExampleFromImageDoFn(beam.DoFn):
         'embedding': _float_feature(embedding.ravel().tolist()),
         'text_embedding': _float_feature(data['text_embedding']),
         'extra_embedding': _float_feature(data['extra_embedding']),
+        'title_embedding': _float_feature(data['title_embedding']),
+        'title_length': _int_feature([data['title_length']]),
+        'content_embedding': _float_feature(data['content_embedding']),
+        'content_length': _int_feature([data['content_length']]),
     }))
 
     if label_ids:

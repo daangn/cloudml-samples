@@ -76,7 +76,12 @@ class Evaluator(object):
       except Exception:
         print("sleep")
         time.sleep(1)
-        self.sv.saver.restore(session, last_checkpoint)
+        try:
+          self.sv.saver.restore(session, last_checkpoint)
+        except Exception:
+          print("sleep2")
+          time.sleep(1)
+          self.sv.saver.restore(session, last_checkpoint)
 
       if self.stream:
         self.sv.start_queue_runners(session)
