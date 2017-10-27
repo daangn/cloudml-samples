@@ -212,9 +212,9 @@ class Model(object):
         # We need a dropout when the size of the dataset is rather small.
         if dropout_keep_prob:
           hidden = tf.nn.dropout(hidden, dropout_keep_prob)
-        #hidden = layers.fully_connected(hidden, hidden_layer_size)
-        #if dropout_keep_prob:
-        #  hidden = tf.nn.dropout(hidden, dropout_keep_prob)
+        hidden = layers.fully_connected(hidden, hidden_layer_size / 2)
+        if dropout_keep_prob:
+          hidden = tf.nn.dropout(hidden, dropout_keep_prob)
         logits = layers.fully_connected(
             hidden, all_labels_count, activation_fn=None)
 
@@ -309,36 +309,42 @@ class Model(object):
 
       title_embeddings = tf.reshape(title_embeddings, [-1, MAX_TITLE_LENGTH, WORD_DIM])
       title_lengths = tf.reshape(title_lengths, [-1])
-      title_lengths = tf.ones_like(title_lengths)
-      layer_sizes = [32]
-      title_outputs = stack_bidirectional_dynamic_rnn(title_embeddings, layer_sizes, title_lengths,
+      layer_sizes = [32,32]
+      title_outputs = multi_rnn(title_embeddings, layer_sizes, title_lengths,
               dropout_keep_prob=dropout_keep_prob, attn_length=0,
               base_cell=tf.contrib.rnn.BasicLSTMCell)
 
       content_embeddings = tf.reshape(content_embeddings, [-1, MAX_CONTENT_LENGTH, WORD_DIM])
       content_lengths = tf.reshape(content_lengths, [-1])
-      content_lengths = tf.ones_like(content_lengths)
-      layer_sizes = [32]
+      layer_sizes = [32,64]
       content_outputs = stack_bidirectional_dynamic_rnn(content_embeddings, layer_sizes, content_lengths,
               dropout_keep_prob=dropout_keep_prob, attn_length=0,
               base_cell=tf.contrib.rnn.LSTMBlockCell)
 
+      title_lengths = tf.maximum(title_lengths, 1)
+      content_lengths = tf.maximum(content_lengths, 1)
       title_mean_embeddings = tf.reduce_sum(title_embeddings, 1) / \
               tf.reshape(tf.cast(title_lengths, tf.float32), [-1, 1])
       content_mean_embeddings = tf.reduce_sum(content_embeddings, 1) / \
               tf.reshape(tf.cast(content_lengths, tf.float32), [-1, 1])
 
-      text_embeddings = tf.concat([title_mean_embeddings, content_mean_embeddings, title_outputs, content_outputs
-          ], 1)
-      #text_embeddings = layers.fully_connected(text_embeddings, 32)
+      text_outputs = tf.concat([title_outputs, content_outputs], 1)
+      text_embeddings = tf.concat([title_mean_embeddings, content_mean_embeddings], 1)
+      text_embeddings = tf.concat([text_embeddings, text_outputs], 1)
 
-      #embeddings = layers.fully_connected(embeddings, BOTTLENECK_TENSOR_SIZE / 8)
+      text_embeddings = layers.fully_connected(text_embeddings, 64)
+      if dropout_keep_prob:
+          text_embeddings = tf.nn.dropout(text_embeddings, dropout_keep_prob)
+
+      embeddings = layers.fully_connected(embeddings, 192)
+      if dropout_keep_prob:
+          embeddings = tf.nn.dropout(embeddings, dropout_keep_prob)
+
       extra_embeddings = layers.fully_connected(extra_embeddings, EXTRA_EMBEDDING_SIZE / 2,
               normalizer_fn=tf.contrib.layers.batch_norm)
       if dropout_keep_prob:
-          #embeddings = tf.nn.dropout(embeddings, dropout_keep_prob)
           extra_embeddings = tf.nn.dropout(extra_embeddings, dropout_keep_prob)
-          #text_embeddings = tf.nn.dropout(text_embeddings, dropout_keep_prob)
+
       embeddings = tf.concat([embeddings, extra_embeddings, text_embeddings],
           1, name='article_embeddings')
 

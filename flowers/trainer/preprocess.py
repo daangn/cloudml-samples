@@ -238,7 +238,12 @@ class ExtractTextDataDoFn(beam.DoFn):
         print item[0]
         print item[12]
         raise e
-    content_embedding, content_length = self.get_embedding_and_length(item[13], MAX_CONTENT_LENGTH)
+    try:
+        content_embedding, content_length = self.get_embedding_and_length(item[13], MAX_CONTENT_LENGTH)
+    except Exception as e:
+        print item[0]
+        print item[13]
+        raise e
 
     extra_embedding = self.sess.run(self.extra_embeddings, feed_dict={
           self.tensors.input_price: [price],
@@ -262,7 +267,10 @@ class ExtractTextDataDoFn(beam.DoFn):
           }
 
   def get_embedding_and_length(self, inline, max_length):
-      embedding = [float(x) for x in inline.split(' ')]
+      if inline == '':
+          embedding = []
+      else:
+          embedding = [float(x) for x in inline.split(' ')]
       length = len(embedding) / WORD_DIM
       if length > max_length:
           length = max_length

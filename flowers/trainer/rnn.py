@@ -99,6 +99,7 @@ def multi_rnn(inputs, layers_size, sequence_length, dropout_keep_prob=1.0,
         return tf.reduce_sum(outputs, 1) / \
               tf.reshape(tf.cast(sequence_length, tf.float32), [-1, 1])
         return tf.concat([states[0][0].h, states[0][1]], 1) # 82
+    return states[-1].h
     return tf.concat([states[-1].c, states[-1].h], 1)
     return tf.concat([states[0].c, states[0].h], 1)
 
