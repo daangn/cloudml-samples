@@ -18,7 +18,7 @@ def dirs(path):
   return [f for f in listdir(path) if not isfile(join(path, f))]
 
 EVAL_RATIO = 0.25
-CHUNK_SIZE = 5000
+CHUNK_SIZE = 10000
 
 with open('data/emb.csv') as f:
     X = f.readlines()[1:]

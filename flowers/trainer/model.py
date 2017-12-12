@@ -41,10 +41,13 @@ MAX_PRICE = 10000000.0
 MAX_IMAGES_COUNT = 10.0
 DAY_TIME = 60.0 * 60 * 24
 
+IMAGE_COUNT_SECTION = [1, 2, 5, 10]
+PRICE_SECTION = [0, 1000, 10000, 30000, 50000, 10*10000, 30*10000, 100*10000, 1000*10000, 10000*10000]
+
 BOTTLENECK_TENSOR_SIZE = 1536
 TEXT_EMBEDDING_SIZE = 10
-FEATURES_COUNT = 10
-EXTRA_EMBEDDING_SIZE = FEATURES_COUNT + TOTAL_CATEGORIES_COUNT
+FEATURES_COUNT = 6
+EXTRA_EMBEDDING_SIZE = FEATURES_COUNT + TOTAL_CATEGORIES_COUNT + len(PRICE_SECTION) + len(IMAGE_COUNT_SECTION)
 
 
 class GraphMod():
@@ -113,8 +116,15 @@ class GraphReferences(object):
     self.input_created_at_ts = None
     self.input_offerable = None
 
+def find_nearest_idx(array, value):
+    return tf.argmin(tf.abs(
+        tf.expand_dims(array, 0) - tf.expand_dims(value, 1)
+    ), 1)
 
 def get_extra_embeddings(tensors):
+    image_count_section = tf.constant(IMAGE_COUNT_SECTION, dtype=tf.float32)
+    price_section = tf.constant(PRICE_SECTION, dtype=tf.float32)
+
     tensors.input_category_id = tf.placeholder(tf.int32, shape=[None])
     tensors.input_price = tf.placeholder(tf.float32, shape=[None])
     tensors.input_images_count = tf.placeholder(tf.float32, shape=[None])
@@ -128,21 +138,18 @@ def get_extra_embeddings(tensors):
     offerable = tensors.input_offerable
 
     category = tf.one_hot(category_id - 1, TOTAL_CATEGORIES_COUNT)
+    price_section = tf.one_hot(find_nearest_idx(price_section, price), len(PRICE_SECTION))
+    images_count_section = tf.one_hot(find_nearest_idx(image_count_section, images_count), len(IMAGE_COUNT_SECTION))
     price_norm = tf.minimum(price / MAX_PRICE, 1.0)
     is_free = tf.cast(tf.equal(price, 0), tf.float32)
-    price_over_10 = tf.cast(tf.greater_equal(price, 100000), tf.float32)
-    price_over_30 = tf.cast(tf.greater_equal(price, 300000), tf.float32)
-    price_over_50 = tf.cast(tf.greater_equal(price, 500000), tf.float32)
-    high_price = tf.minimum(price / MAX_PRICE / 1000, 1.0)
     images_count_norm = tf.minimum(images_count / MAX_IMAGES_COUNT, 1.0)
     created_hour = created_at_ts % DAY_TIME * 1.0 / DAY_TIME
     created_hour = tf.cast(created_hour, tf.float32)
     day = tf.cast(created_at_ts / DAY_TIME % 7 / 7.0, tf.float32)
 
-    extra_embeddings = tf.concat([price_norm, is_free, price_over_10, price_over_30,
-      price_over_50, high_price, images_count_norm, offerable, created_hour, day], 0)
+    extra_embeddings = tf.concat([price_norm, is_free, images_count_norm, offerable, created_hour, day], 0)
     extra_embeddings = tf.reshape(extra_embeddings, [-1, FEATURES_COUNT])
-    extra_embeddings = tf.concat([extra_embeddings, category], 1)
+    extra_embeddings = tf.concat([extra_embeddings, category, price_section, images_count_section], 1)
     return extra_embeddings
 
 class Model(object):
@@ -261,7 +268,7 @@ class Model(object):
     with tf.name_scope('final_ops'):
       dropout_keep_prob = self.dropout if is_training else None
       embeddings = layers.fully_connected(embeddings, BOTTLENECK_TENSOR_SIZE / 8)
-      extra_embeddings = layers.fully_connected(extra_embeddings, EXTRA_EMBEDDING_SIZE / 2,
+      extra_embeddings = layers.fully_connected(extra_embeddings, int(EXTRA_EMBEDDING_SIZE / 2),
               normalizer_fn=tf.contrib.layers.batch_norm)
       if dropout_keep_prob:
           embeddings = tf.nn.dropout(embeddings, dropout_keep_prob)
@@ -294,18 +301,29 @@ class Model(object):
     # Add means across all batches.
     loss_updates, loss_op = util.loss(loss_value)
     accuracy_updates, accuracy_op = util.accuracy(logits, labels)
-    recall_op, recall_updates = tf.metrics.recall_at_k(labels, logits, 1)
-    precision_op, precision_updates = tf.metrics.sparse_precision_at_k(labels, logits, 1)
+
+    precisions = []
+    recalls = []
+    for i in range(self.label_count):
+        op, updates = tf.metrics.recall_at_k(labels, logits, 1, class_id=i)
+        recalls.append({'op': op, 'updates': updates})
+        op, updates = tf.metrics.sparse_precision_at_k(labels, logits, 1, class_id=i)
+        precisions.append({'op': op, 'updates': updates})
 
     if not is_training:
       tf.summary.scalar('accuracy', accuracy_op)
       tf.summary.scalar('loss', loss_op)
-      tf.summary.scalar('recall', recall_op)
-      tf.summary.scalar('precision', precision_op)
       tf.summary.histogram('histogram_loss', loss_op)
+      for i in range(self.label_count):
+          tf.summary.scalar('recall%d' % i, recalls[i]['op'])
+          tf.summary.scalar('precision%d' % i, precisions[i]['op'])
 
+    precision_updates = [x['updates'] for x in precisions]
+    precision_ops = [x['op'] for x in precisions]
+    recall_updates = [x['updates'] for x in recalls]
+    recall_ops = [x['op'] for x in recalls]
     tensors.metric_updates = loss_updates + accuracy_updates + [recall_updates, precision_updates]
-    tensors.metric_values = [loss_op, accuracy_op, recall_op, precision_op]
+    tensors.metric_values = [loss_op, accuracy_op, recall_ops, precision_ops]
     return tensors
 
   def build_train_graph(self, data_paths, batch_size):
