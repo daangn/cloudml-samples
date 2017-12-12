@@ -88,10 +88,10 @@ from tensorflow.python.framework import errors
 from tensorflow.python.lib.io import file_io
 
 try:
-  from model import BOTTLENECK_TENSOR_SIZE
+  from model import BOTTLENECK_TENSOR_SIZE, TEXT_EMBEDDING_SIZE
   from model import get_extra_embeddings, GraphReferences
 except ImportError:
-  from trainer.model import BOTTLENECK_TENSOR_SIZE
+  from trainer.model import BOTTLENECK_TENSOR_SIZE, TEXT_EMBEDDING_SIZE
   from trainer.model import get_extra_embeddings, GraphReferences
 
 
@@ -216,7 +216,10 @@ class ExtractTextDataDoFn(beam.DoFn):
 
     key = item[0]
     try:
-      text_embedding = [float(x) for x in item[1].rstrip().split(' ')]
+      if item[1] == '':
+        text_embedding = [0.0] * TEXT_EMBEDDING_SIZE
+      else:
+        text_embedding = [float(x) for x in item[1].rstrip().split(' ')]
     except ValueError as e:
       logging.error("%s", item)
       raise e
