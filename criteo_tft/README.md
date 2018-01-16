@@ -1,5 +1,9 @@
 ## Criteo Sample
 
+Predict how likely a person is to click on an advertisement.
+
+- - -
+
 The Criteo sample demonstrates the capability of both linear and deep models on
 the [criteo dataset](https://www.kaggle.com/c/criteo-display-ad-challenge).
 
@@ -9,11 +13,6 @@ the [criteo dataset](https://www.kaggle.com/c/criteo-display-ad-challenge).
     [here](https://cloud.google.com/ml/docs/how-tos/getting-set-up) before
     trying the sample. More documentation about Cloud ML is available
     [here](https://cloud.google.com/ml/docs/).
-*   Make sure you have installed
-    [Tensorflow](https://www.tensorflow.org/install/) if you want to run the
-    sample locally.
-*   Make sure you have installed
-    [tensorflow-transform](https://github.com/tensorflow/transform).
 *   Make sure your Google Cloud project has sufficient quota.
 
 ## Install Dependencies
