@@ -186,7 +186,7 @@ class ReadImageAndConvertToJpegDoFn(beam.DoFn):
         emb_filepath = 'data/empty.emb'
 
     try:
-      embedding = np.fromstring(
+      embedding = np.frombuffer(
           file_io.read_file_to_string(emb_filepath),
           dtype=np.float32)
       embedding = embedding.reshape(self.SHAPE)
