@@ -269,7 +269,8 @@ class Model(object):
       dropout_keep_prob = self.dropout if is_training else None
       embeddings = layers.fully_connected(embeddings, BOTTLENECK_TENSOR_SIZE / 8)
       extra_embeddings = layers.fully_connected(extra_embeddings, int(EXTRA_EMBEDDING_SIZE / 2),
-              normalizer_fn=tf.contrib.layers.batch_norm)
+              normalizer_fn=tf.contrib.layers.batch_norm,
+              normalizer_params={'is_training': is_training})
       if dropout_keep_prob:
           embeddings = tf.nn.dropout(embeddings, dropout_keep_prob)
           extra_embeddings = tf.nn.dropout(extra_embeddings, dropout_keep_prob)
@@ -437,5 +438,9 @@ def training(loss_op):
   global_step = tf.Variable(0, name='global_step', trainable=False)
   with tf.name_scope('train'):
     optimizer = tf.train.AdamOptimizer(epsilon=0.001)
-    train_op = optimizer.minimize(loss_op, global_step)
-    return train_op, global_step
+
+    # for batch norm http://ruishu.io/2016/12/27/batchnorm/
+    update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+    with tf.control_dependencies(update_ops):
+      train_op = optimizer.minimize(loss_op, global_step)
+      return train_op, global_step
