@@ -152,10 +152,10 @@ class ExtractLabelIdsDoFn(beam.DoFn):
     # that were not in the dictionary.  In this sample, we simply skip it.
     # This code already supports multi-label problems if you want to use it.
     label_ids = []
-    for label in row[7:]:
-      try:
+    label = row[7]
+    try:
         label_ids.append(self.label_to_id_map[label.strip()])
-      except KeyError:
+    except KeyError:
         unknown_label.inc()
 
     labels_count.inc(len(label_ids))
@@ -229,6 +229,8 @@ class ExtractTextDataDoFn(beam.DoFn):
     images_count = item[4]
     created_at_ts = item[5]
     offerable = item[6]
+    recent_articles_count = item[8]
+    blocks_inline = item[9]
 
     extra_embedding = self.sess.run(self.extra_embeddings, feed_dict={
           self.tensors.input_price: [price],
@@ -236,6 +238,8 @@ class ExtractTextDataDoFn(beam.DoFn):
           self.tensors.input_offerable: [offerable],
           self.tensors.input_created_at_ts: [created_at_ts],
           self.tensors.input_category_id: [category_id],
+          self.tensors.input_recent_articles_count: [recent_articles_count],
+          self.tensors.input_blocks_inline: [blocks_inline],
           })[0]
 
     yield item, label_ids, embedding, {

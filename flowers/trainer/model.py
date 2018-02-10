@@ -43,11 +43,14 @@ DAY_TIME = 60.0 * 60 * 24
 
 IMAGE_COUNT_SECTION = [1, 2, 5, 10]
 PRICE_SECTION = [0, 1000, 10000, 30000, 50000, 10*10000, 30*10000, 100*10000, 1000*10000, 10000*10000]
+RECENT_ARTICLES_COUNT_SECTION = [0, 1, 5, 20, 60, 100]
 
 BOTTLENECK_TENSOR_SIZE = 1536
 TEXT_EMBEDDING_SIZE = 10
 FEATURES_COUNT = 6
-EXTRA_EMBEDDING_SIZE = FEATURES_COUNT + TOTAL_CATEGORIES_COUNT + len(PRICE_SECTION) + len(IMAGE_COUNT_SECTION)
+BLOCKS_COUNT = 66
+EXTRA_EMBEDDING_SIZE = FEATURES_COUNT + TOTAL_CATEGORIES_COUNT + len(PRICE_SECTION) \
+    + len(IMAGE_COUNT_SECTION) + len(RECENT_ARTICLES_COUNT_SECTION) + BLOCKS_COUNT
 
 
 class GraphMod():
@@ -115,6 +118,8 @@ class GraphReferences(object):
     self.input_images_count = None
     self.input_created_at_ts = None
     self.input_offerable = None
+    self.input_recent_articles_count = None
+    self.input_blocks_inline = None
 
 def find_nearest_idx(array, value):
     return tf.argmin(tf.abs(
@@ -122,24 +127,31 @@ def find_nearest_idx(array, value):
     ), 1)
 
 def get_extra_embeddings(tensors):
-    image_count_section = tf.constant(IMAGE_COUNT_SECTION, dtype=tf.float32)
+    images_count_section = tf.constant(IMAGE_COUNT_SECTION, dtype=tf.float32)
     price_section = tf.constant(PRICE_SECTION, dtype=tf.float32)
+    recent_articles_count_section = tf.constant(RECENT_ARTICLES_COUNT_SECTION, dtype=tf.float32)
 
     tensors.input_category_id = tf.placeholder(tf.int32, shape=[None])
     tensors.input_price = tf.placeholder(tf.float32, shape=[None])
     tensors.input_images_count = tf.placeholder(tf.float32, shape=[None])
     tensors.input_created_at_ts = tf.placeholder(tf.float64, shape=[None])
     tensors.input_offerable = tf.placeholder(tf.float32, shape=[None])
+    tensors.input_recent_articles_count = tf.placeholder(tf.float32, shape=[None])
+    tensors.input_blocks_inline = tf.placeholder(tf.string, shape=[None])
 
     category_id = tensors.input_category_id
     price = tensors.input_price
     images_count = tensors.input_images_count
     created_at_ts = tensors.input_created_at_ts
     offerable = tensors.input_offerable
+    recent_articles_count = tensors.input_recent_articles_count
+    blocks = blocks_inline_to_matrix(tensors.input_blocks_inline)
 
     category = tf.one_hot(category_id - 1, TOTAL_CATEGORIES_COUNT)
     price_section = tf.one_hot(find_nearest_idx(price_section, price), len(PRICE_SECTION))
-    images_count_section = tf.one_hot(find_nearest_idx(image_count_section, images_count), len(IMAGE_COUNT_SECTION))
+    images_count_section = tf.one_hot(find_nearest_idx(images_count_section, images_count), len(IMAGE_COUNT_SECTION))
+    recent_articles_count_section = tf.one_hot(find_nearest_idx(
+        recent_articles_count_section, recent_articles_count), len(RECENT_ARTICLES_COUNT_SECTION))
     price_norm = tf.minimum(price / MAX_PRICE, 1.0)
     is_free = tf.cast(tf.equal(price, 0), tf.float32)
     images_count_norm = tf.minimum(images_count / MAX_IMAGES_COUNT, 1.0)
@@ -149,8 +161,24 @@ def get_extra_embeddings(tensors):
 
     extra_embeddings = tf.concat([price_norm, is_free, images_count_norm, offerable, created_hour, day], 0)
     extra_embeddings = tf.reshape(extra_embeddings, [-1, FEATURES_COUNT])
-    extra_embeddings = tf.concat([extra_embeddings, category, price_section, images_count_section], 1)
+    extra_embeddings = tf.concat([extra_embeddings, category, price_section, images_count_section,
+        recent_articles_count_section, blocks], 1)
     return extra_embeddings
+
+def blocks_inline_to_matrix(inline):
+    splited_items = tf.string_split(inline, ' ')
+    splited_values = tf.string_split(splited_items.values, '-')
+    values = tf.string_to_number(splited_values.values, tf.int32)
+    ids = tf.one_hot(values[::2] - 1, BLOCKS_COUNT, dtype=tf.int32)
+    counts = values[1::2]
+    counts = tf.expand_dims(counts, -1)
+    values = counts * ids
+    indices = splited_items.indices[:,0]
+    inlines_count = tf.shape(inline)[0]
+    one_hot_indices = tf.one_hot(indices, inlines_count, dtype=tf.int32)
+    results = tf.matmul(tf.transpose(one_hot_indices), values)
+    return tf.cast(results, tf.float32)
+
 
 class Model(object):
   """TensorFlow model for the flowers problem."""
@@ -273,6 +301,7 @@ class Model(object):
               normalizer_params={'is_training': is_training})
       if dropout_keep_prob:
           embeddings = tf.nn.dropout(embeddings, dropout_keep_prob)
+          text_embeddings = tf.nn.dropout(text_embeddings, dropout_keep_prob)
           extra_embeddings = tf.nn.dropout(extra_embeddings, dropout_keep_prob)
       embeddings = tf.concat([embeddings, text_embeddings, extra_embeddings],
           1, name='article_embeddings')
@@ -367,6 +396,8 @@ class Model(object):
         'images_count': tensors.input_images_count,
         'created_at_ts': tensors.input_created_at_ts,
         'offerable': tensors.input_offerable,
+        'recent_articles_count': tensors.input_recent_articles_count,
+        'blocks_inline': tensors.input_blocks_inline,
     }
 
     # To extract the id, we need to add the identity function.
