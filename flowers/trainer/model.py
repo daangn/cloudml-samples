@@ -29,6 +29,8 @@ from tensorflow.python.saved_model import utils as saved_model_utils
 import util
 from util import override_if_not_in_args
 
+from rnn import stack_bidirectional_dynamic_rnn, simple_rnn, multi_rnn
+
 slim = tf.contrib.slim
 
 LOGITS_TENSOR_NAME = 'logits_tensor'
@@ -46,7 +48,9 @@ PRICE_SECTION = [0, 1000, 10000, 30000, 50000, 10*10000, 30*10000, 100*10000, 10
 RECENT_ARTICLES_COUNT_SECTION = [0, 1, 5, 20, 60, 100]
 
 BOTTLENECK_TENSOR_SIZE = 1536
-TEXT_EMBEDDING_SIZE = 10
+WORD_DIM = 50
+MAX_TEXT_LENGTH = 256
+TEXT_EMBEDDING_SIZE = WORD_DIM * MAX_TEXT_LENGTH
 FEATURES_COUNT = 6
 BLOCKS_COUNT = 66
 EXTRA_EMBEDDING_SIZE = FEATURES_COUNT + TOTAL_CATEGORIES_COUNT + len(PRICE_SECTION) \
@@ -120,6 +124,7 @@ class GraphReferences(object):
     self.input_offerable = None
     self.input_recent_articles_count = None
     self.input_blocks_inline = None
+    self.input_text_length = None
 
 def find_nearest_idx(array, value):
     return tf.argmin(tf.abs(
@@ -279,6 +284,8 @@ class Model(object):
             'text_embedding':
                 tf.FixedLenFeature(
                     shape=[TEXT_EMBEDDING_SIZE], dtype=tf.float32),
+            'text_length':
+                tf.FixedLenFeature(shape=[1], dtype=tf.int64),
             'extra_embedding':
                 tf.FixedLenFeature(
                     shape=[EXTRA_EMBEDDING_SIZE], dtype=tf.float32),
@@ -288,6 +295,7 @@ class Model(object):
         uris = tf.squeeze(parsed['image_uri'])
         embeddings = parsed['embedding']
         text_embeddings = parsed['text_embedding']
+        text_lengths = parsed['text_length']
         extra_embeddings = parsed['extra_embedding']
 
     # We assume a default label, so the total number of labels is equal to
@@ -301,9 +309,19 @@ class Model(object):
               normalizer_params={'is_training': is_training})
       if dropout_keep_prob:
           embeddings = tf.nn.dropout(embeddings, dropout_keep_prob)
-          text_embeddings = tf.nn.dropout(text_embeddings, dropout_keep_prob)
           extra_embeddings = tf.nn.dropout(extra_embeddings, dropout_keep_prob)
-      embeddings = tf.concat([embeddings, text_embeddings, extra_embeddings],
+
+      text_embeddings = tf.reshape(text_embeddings, [-1, MAX_TEXT_LENGTH, WORD_DIM])
+      text_lengths = tf.reshape(text_lengths, [-1])
+      layer_sizes = [WORD_DIM, WORD_DIM]
+      initial_state = tf.concat([embeddings, extra_embeddings], 1, name='initial_state')
+      initial_state = layers.fully_connected(initial_state, 100)
+
+      text_embeddings = multi_rnn(text_embeddings, layer_sizes, text_lengths,
+              dropout_keep_prob=dropout_keep_prob, attn_length=0,
+              initial_state=initial_state, base_cell=tf.contrib.rnn.BasicLSTMCell)
+
+      embeddings = tf.concat([embeddings, extra_embeddings],
           1, name='article_embeddings')
       softmax, logits = self.add_final_training_ops(
           embeddings,

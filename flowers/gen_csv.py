@@ -19,10 +19,11 @@ def dirs(path):
 
 EVAL_RATIO = 0.25
 CHUNK_SIZE = 10000
+LABEL_COL = 6
 
 with open('data/emb.csv') as f:
     X = f.readlines()[1:]
-y = [x.split(',')[7].rstrip() for x in X]
+y = [x.split(',')[LABEL_COL].rstrip() for x in X]
 
 X = np.array(X)
 y = np.array(y)
@@ -33,22 +34,25 @@ print(Counter(y).most_common())
 sss = StratifiedShuffleSplit(n_splits=1, test_size=EVAL_RATIO)
 train_index, test_index = next(sss.split(X, y))
 
-trains = zip(X[train_index], y[train_index])
-evals = zip(X[test_index], y[test_index])
+print('total count: %d' % X.shape[0])
+K = np.zeros((X.shape[0]), np.int32)
+K[test_index] = 1
 
-assert len(set(test_index) - set(train_index)) == len(test_index)
+import math, random
+train_set_size = int(math.ceil(1.0 * len(train_index) / CHUNK_SIZE))
+eval_set_size = int(math.ceil(1.0 * len(test_index) / CHUNK_SIZE))
+def set_file_open(name, i):
+    return open("data/%s_set%d.csv" % (name, i), 'w')
+files = [
+    [set_file_open('train', i) for i in range(train_set_size)],
+    [set_file_open('eval', i) for i in range(eval_set_size)],
+]
 
-print('train y counter')
-print(Counter(y[train_index]).most_common())
-print('test y counter')
-print(Counter(y[test_index]).most_common())
+with open('data/text_normalized.txt.emb') as f:
+    for i, line in enumerate(f):
+        kind = K[i]
+        random.choice(files[kind]).write("%s,%s" % (X[i].rstrip(), line))
 
-for i, chunked in enumerate(chunks(trains, CHUNK_SIZE)):
-  with open("data/train_set%d.csv" % i, 'w') as f:
-    for x, _ in chunked:
-      f.write("%s" % x)
-
-for i, chunked in enumerate(chunks(evals, CHUNK_SIZE)):
-  with open('data/eval_set%d.csv' % i, 'w') as f:
-    for x, _ in chunked:
-      f.write("%s" % x)
+for kind_files in files:
+    for f in kind_files:
+        f.close()

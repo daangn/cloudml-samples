@@ -12,18 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from setuptools import find_packages
 from setuptools import setup
 
 REQUIRED_PACKAGES = [
-  'tensorflow>=1.0.1',
+  'tensorflow>=1.4.0',
 ]
 
 setup(
     name='trainer',
     version='0.1',
     install_requires=REQUIRED_PACKAGES,
-    packages=find_packages(),
+    packages=['trainer'],
     include_package_data=True,
     requires=[]
 )

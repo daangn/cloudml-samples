@@ -67,6 +67,7 @@ import logging
 import os
 import subprocess
 import sys
+csv.field_size_limit(sys.maxsize)
 
 import apache_beam as beam
 from apache_beam.metrics import Metrics
@@ -87,13 +88,9 @@ from tensorflow.contrib.slim.python.slim.nets import inception_v3 as inception
 from tensorflow.python.framework import errors
 from tensorflow.python.lib.io import file_io
 
-try:
-  from model import BOTTLENECK_TENSOR_SIZE, TEXT_EMBEDDING_SIZE
-  from model import get_extra_embeddings, GraphReferences
-except ImportError:
-  from trainer.model import BOTTLENECK_TENSOR_SIZE, TEXT_EMBEDDING_SIZE
-  from trainer.model import get_extra_embeddings, GraphReferences
-
+from trainer.model import BOTTLENECK_TENSOR_SIZE, WORD_DIM, MAX_TEXT_LENGTH
+from trainer.model import get_extra_embeddings, GraphReferences
+from trainer.emb import id_to_path
 
 slim = tf.contrib.slim
 
@@ -152,7 +149,7 @@ class ExtractLabelIdsDoFn(beam.DoFn):
     # that were not in the dictionary.  In this sample, we simply skip it.
     # This code already supports multi-label problems if you want to use it.
     label_ids = []
-    label = row[7]
+    label = row[6]
     try:
         label_ids.append(self.label_to_id_map[label.strip()])
     except KeyError:
@@ -173,6 +170,10 @@ class ReadImageAndConvertToJpegDoFn(beam.DoFn):
   """
   SHAPE = [1, 1, 1, BOTTLENECK_TENSOR_SIZE]
 
+  def __init__(self, emb_path, empty_emb_path):
+    self._emb_path = emb_path
+    self._empty_emb_path = empty_emb_path
+
   def process(self, element):
     try:
       row, label_ids = element.element
@@ -180,10 +181,9 @@ class ReadImageAndConvertToJpegDoFn(beam.DoFn):
       row, label_ids = element
 
     id = int(row[0])
-    shard = id / 10000
-    emb_filepath = "data/image_embeddings/%d/%d.emb" % (shard, id)
+    emb_filepath = "%s/%s" % (self._emb_path, id_to_path(id))
     if not file_io.file_exists(emb_filepath):
-        emb_filepath = 'data/empty.emb'
+        emb_filepath = self._empty_emb_path
 
     try:
       embedding = np.frombuffer(
@@ -215,22 +215,13 @@ class ExtractTextDataDoFn(beam.DoFn):
       item, label_ids, embedding = element
 
     key = item[0]
-    try:
-      if item[1] == '':
-        text_embedding = [0.0] * TEXT_EMBEDDING_SIZE
-      else:
-        text_embedding = [float(x) for x in item[1].rstrip().split(' ')]
-    except ValueError as e:
-      logging.error("%s", item)
-      raise e
-
-    category_id = item[2]
-    price = item[3]
-    images_count = item[4]
-    created_at_ts = item[5]
-    offerable = item[6]
-    recent_articles_count = item[8]
-    blocks_inline = item[9]
+    category_id = item[1]
+    price = item[2]
+    images_count = item[3]
+    created_at_ts = item[4]
+    offerable = item[5]
+    recent_articles_count = item[7]
+    blocks_inline = item[8]
 
     extra_embedding = self.sess.run(self.extra_embeddings, feed_dict={
           self.tensors.input_price: [price],
@@ -242,15 +233,34 @@ class ExtractTextDataDoFn(beam.DoFn):
           self.tensors.input_blocks_inline: [blocks_inline],
           })[0]
 
+    try:
+        text_embedding, text_length = self.get_embedding_and_length(item[9], MAX_TEXT_LENGTH)
+    except Exception as e:
+        error_count.inc()
+        logging.error(item[9])
+        raise e
+
     yield item, label_ids, embedding, {
           'text_embedding': text_embedding,
+          'text_length': text_length,
           'extra_embedding': list(extra_embedding),
           }
 
+  def get_embedding_and_length(self, inline, max_length):
+      if inline == '':
+          embedding = []
+      else:
+          embedding = [float(x) for x in inline.split()]
+      length = len(embedding) / WORD_DIM
+      if length > max_length:
+          length = max_length
+          embedding = embedding[:WORD_DIM * max_length]
+      else:
+          embedding += [0.0] * ((max_length - length) * WORD_DIM)
+      return embedding, length
+
 
 class TFExampleFromImageDoFn(beam.DoFn):
-  def start_bundle(self, context=None):
-    self.data_map = {}
 
   def process(self, element):
 
@@ -261,7 +271,7 @@ class TFExampleFromImageDoFn(beam.DoFn):
       return tf.train.Feature(float_list=tf.train.FloatList(value=value))
 
     def _int_feature(value):
-      return tf.train.Feature(float_list=tf.train.Int64List(value=value))
+      return tf.train.Feature(int64_list=tf.train.Int64List(value=value))
 
     try:
       element = element.element
@@ -275,6 +285,7 @@ class TFExampleFromImageDoFn(beam.DoFn):
         'image_uri': _bytes_feature([id]),
         'embedding': _float_feature(embedding.ravel().tolist()),
         'text_embedding': _float_feature(data['text_embedding']),
+        'text_length': _int_feature([data['text_length']]),
         'extra_embedding': _float_feature(data['extra_embedding']),
     }))
 
@@ -298,7 +309,7 @@ def configure_pipeline(p, opt):
        | 'Extract label ids' >> beam.ParDo(ExtractLabelIdsDoFn(),
                                            beam.pvalue.AsIter(labels))
        | 'Read and convert to JPEG'
-       >> beam.ParDo(ReadImageAndConvertToJpegDoFn())
+       >> beam.ParDo(ReadImageAndConvertToJpegDoFn(opt.emb_path, opt.empty_emb_path))
        | 'Extract text data' >> beam.ParDo(ExtractTextDataDoFn())
        | 'Embed and make TFExample' >> beam.ParDo(TFExampleFromImageDoFn())
        # TODO(b/35133536): Get rid of this Map and instead use
@@ -328,6 +339,14 @@ def default_args(argv):
       help='Input specified as uri to CSV file. Each line of csv file '
       'contains colon-separated GCS uri to an image and labels.')
   parser.add_argument(
+      '--emb_path',
+      default='data/image_embeddings',
+      help='')
+  parser.add_argument(
+      '--empty_emb_path',
+      default='data/empty.emb',
+      help='')
+  parser.add_argument(
       '--input_dict',
       dest='input_dict',
       required=True,
@@ -347,16 +366,21 @@ def default_args(argv):
       type=str,
       default='flowers-' + datetime.datetime.now().strftime('%Y%m%d-%H%M%S'),
       help='A unique job identifier.')
-#  parser.add_argument(
-#      '--num_workers', default=2, type=int, help='The number of workers.')
+  parser.add_argument(
+      '--num_workers', default=3, type=int, help='The number of workers.')
   parser.add_argument('--cloud', default=False, action='store_true')
   parser.add_argument(
       '--runner',
       help='See Dataflow runners, may be blocking'
       ' or not, on cloud or not, etc.')
+#  parser.add_argument(
+#      '--extra_package', type=str, help='')
   parser.add_argument(
-      '--extra_package', default='./dist/trainer-0.1.1.tar.gz', type=str,
-      help='Path to the extra package path.')
+      '--setup_file', type=str, help='')
+  parser.add_argument(
+      '--autoscaling_algorithm', default='THROUGHPUT_BASED', type=str, help='')
+  parser.add_argument(
+      '--max_num_workers', default=30, type=int, help='')
 
   parsed_args, _ = parser.parse_known_args(argv)
 
