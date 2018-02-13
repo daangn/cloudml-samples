@@ -6,6 +6,8 @@ from collections import Counter
 import numpy as np
 from sklearn.model_selection import StratifiedShuffleSplit
 
+from trainer.emb import LABEL_COL
+
 def chunks(l, n):
 	"""Yield successive n-sized chunks from l."""
 	for i in xrange(0, len(l), n):
@@ -19,7 +21,6 @@ def dirs(path):
 
 EVAL_RATIO = 0.25
 CHUNK_SIZE = 10000
-LABEL_COL = 6
 
 with open('data/emb.csv') as f:
     X = f.readlines()[1:]
@@ -27,6 +28,9 @@ y = [x.split(',')[LABEL_COL].rstrip() for x in X]
 
 X = np.array(X)
 y = np.array(y)
+
+print(X)
+print(y)
 
 print('All y counter')
 print(Counter(y).most_common())
@@ -41,8 +45,10 @@ K[test_index] = 1
 import math, random
 train_set_size = int(math.ceil(1.0 * len(train_index) / CHUNK_SIZE))
 eval_set_size = int(math.ceil(1.0 * len(test_index) / CHUNK_SIZE))
+
 def set_file_open(name, i):
     return open("data/%s_set%d.csv" % (name, i), 'w')
+
 files = [
     [set_file_open('train', i) for i in range(train_set_size)],
     [set_file_open('eval', i) for i in range(eval_set_size)],

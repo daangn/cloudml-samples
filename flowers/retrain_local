@@ -18,7 +18,7 @@ declare -r DICT_FILE="${DATA_PATH}/article_dict.txt"
 echo
 echo "Using job id: " $JOB_ID
 
-if [[ $CMD == 'pre' ]]; then
+if [[ $CMD == 'gen' ]]; then
   echo "Fetch image embedding files"
   python fetch_image_embeddings.py
 
@@ -26,11 +26,13 @@ if [[ $CMD == 'pre' ]]; then
   rm -f data/train_set*.csv data/eval_set*.csv
   python gen_csv.py
 
+elif [[ $CMD == 'pre' ]]; then
+
   for f in `ls ${DATA_PATH}/eval_set*.csv`
   do
     n=`echo $f | sed "s/.*[^0-9]\([0-9]*\).csv/\1/"`
     echo "Preprocess eval_set ${n}"
-    python trainer/preprocess.py \
+    python -E preprocess.py \
       --input_dict "$DICT_FILE" \
       --input_path "${f}" \
       --output_path "${GCS_PATH}/preproc/eval${n}"
@@ -69,6 +71,7 @@ elif [[ $CMD == 'train' ]] || [[ $CMD == 'train_test' ]]; then
     --output_path "${GCS_PATH}/training" \
     --eval_data_paths "${GCS_PATH}/preproc/eval*" \
     --train_data_paths "${TRAIN_PATHS}" \
+    --input_dict "$DICT_FILE" \
     --dropout 0.6
 
 elif [[ $CMD == 'predict' ]]; then
@@ -115,10 +118,6 @@ elif [[ $CMD == 'set' ]]; then
   gcloud ml-engine versions set-default "$VERSION_NAME" --model "$MODEL_NAME"
 
   echo "RAILS_ENV=production bin/rake nlp:publish_fasttext_sentence"
-
-elif [[ $CMD == 'tb' ]]; then
-
-  tensorboard --logdir="${GCS_PATH}/training"
 
 else
 

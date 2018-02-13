@@ -30,8 +30,7 @@ def make_rnn_cells(rnn_layer_sizes,
       cell = tf.contrib.rnn.AttentionCellWrapper(
           cell, attn_length, state_is_tuple=True)
     else:
-      pass
-      #cell = tf.contrib.rnn.ResidualWrapper(cell)
+      cell = tf.contrib.rnn.ResidualWrapper(cell)
     if dropout_keep_prob is not None and dropout_keep_prob < 1.0:
       cell = tf.contrib.rnn.DropoutWrapper(
           cell, output_keep_prob=dropout_keep_prob)
@@ -46,15 +45,24 @@ def make_rnn_cell(rnn_layer_sizes,
     return tf.contrib.rnn.MultiRNNCell(cells)
 
 def stack_bidirectional_dynamic_rnn(inputs, layer_sizes, sequence_length,
-        attn_length=0, dropout_keep_prob=1.0, base_cell=lstm_ops.LSTMBlockCell):
+        initial_state=None, attn_length=0, dropout_keep_prob=1.0,
+        base_cell=tf.contrib.rnn.LSTMBlockCell):
     cells_fw = make_rnn_cells(layer_sizes, dropout_keep_prob=dropout_keep_prob,
           attn_length=attn_length, base_cell=base_cell)
     cells_bw = make_rnn_cells(layer_sizes, dropout_keep_prob=dropout_keep_prob,
           attn_length=attn_length, base_cell=base_cell)
 
+    if initial_state is not None:
+        batch_size = inputs.shape[0]
+        initial_states_fw = [tf.contrib.rnn.LSTMStateTuple(tf.zeros([batch_size, size]), initial_state) for size in layer_sizes]
+        initial_states_bw = [tf.contrib.rnn.LSTMStateTuple(tf.zeros([batch_size, size]), initial_state) for size in layer_sizes]
+    else:
+        initial_states_fw = initial_states_bw = None
+
     outputs, output_state_fw, output_state_bw = contrib_rnn.stack_bidirectional_dynamic_rnn(
-      cells_fw, cells_bw, inputs,
-      sequence_length=sequence_length,
+      cells_fw, cells_bw, inputs, sequence_length=sequence_length,
+      initial_states_fw=initial_states_fw,
+      initial_states_bw=initial_states_bw,
       dtype=tf.float32)
     output_state_fw = output_state_fw[-1]
     output_state_bw = output_state_bw[-1]
@@ -82,12 +90,12 @@ def simple_rnn(inputs, num_units, sequence_length, dropout_keep_prob=1.0, attn_l
         #return tf.concat([state[0].h, state[1]], 1)
     return tf.concat([state.c, state.h], 1)
 
-def multi_rnn(inputs, layers_size, sequence_length, dropout_keep_prob=1.0,
+def multi_rnn(inputs, layer_sizes, sequence_length, dropout_keep_prob=1.0,
         attn_length=0, base_cell=tf.contrib.rnn.BasicLSTMCell, initial_state=None):
     if initial_state is not None:
         batch_size = inputs.shape[0]
-        initial_state = tuple([tf.contrib.rnn.LSTMStateTuple(tf.zeros([batch_size, size]), initial_state) for size in layers_size])
-    cells = make_rnn_cells(layers_size, dropout_keep_prob=dropout_keep_prob,
+        initial_state = tuple([tf.contrib.rnn.LSTMStateTuple(tf.zeros([batch_size, size]), initial_state) for size in layer_sizes])
+    cells = make_rnn_cells(layer_sizes, dropout_keep_prob=dropout_keep_prob,
             attn_length=attn_length, base_cell=base_cell)
     cell = tf.contrib.rnn.MultiRNNCell(cells, state_is_tuple=True)
     outputs, states = tf.nn.dynamic_rnn(cell, inputs, initial_state=initial_state,

@@ -25,6 +25,7 @@ from tensorflow.python.saved_model import signature_constants
 from tensorflow.python.saved_model import signature_def_utils
 from tensorflow.python.saved_model import tag_constants
 from tensorflow.python.saved_model import utils as saved_model_utils
+from tensorflow.python.lib.io import file_io
 
 import util
 from util import override_if_not_in_args
@@ -94,6 +95,7 @@ def create_model():
   # during preprocessing.
   parser.add_argument('--label_count', type=int, default=5)
   parser.add_argument('--dropout', type=float, default=0.5)
+  parser.add_argument('--input_dict', type=str)
   args, task_args = parser.parse_known_args()
   override_if_not_in_args('--max_steps', '1000', task_args)
   override_if_not_in_args('--batch_size', '100', task_args)
@@ -101,7 +103,7 @@ def create_model():
   override_if_not_in_args('--eval_interval_secs', '2', task_args)
   override_if_not_in_args('--log_interval_secs', '2', task_args)
   override_if_not_in_args('--min_train_eval_rate', '2', task_args)
-  return Model(args.label_count, args.dropout), task_args
+  return Model(args.label_count, args.dropout, args.input_dict), task_args
 
 
 class GraphReferences(object):
@@ -188,9 +190,10 @@ def blocks_inline_to_matrix(inline):
 class Model(object):
   """TensorFlow model for the flowers problem."""
 
-  def __init__(self, label_count, dropout):
+  def __init__(self, label_count, dropout, labels_path):
     self.label_count = label_count
     self.dropout = dropout
+    self.labels = file_io.read_file_to_string(labels_path).split('\n')
 
   def add_final_training_ops(self,
                              embeddings,
@@ -258,8 +261,10 @@ class Model(object):
       inception_input, inception_embeddings = self.build_inception_graph()
       embeddings = inception_embeddings
       text_embeddings = tf.placeholder(tf.float32, shape=[None, TEXT_EMBEDDING_SIZE])
+      text_lengths = tf.placeholder(tf.int64, shape=[None, 1])
       tensors.input_image = inception_input
       tensors.input_text = text_embeddings
+      tensors.input_text_length = text_lengths
 
       extra_embeddings = get_extra_embeddings(tensors)
     else:
@@ -313,15 +318,19 @@ class Model(object):
 
       text_embeddings = tf.reshape(text_embeddings, [-1, MAX_TEXT_LENGTH, WORD_DIM])
       text_lengths = tf.reshape(text_lengths, [-1])
-      layer_sizes = [WORD_DIM, WORD_DIM]
+      layer_sizes = [WORD_DIM]
       initial_state = tf.concat([embeddings, extra_embeddings], 1, name='initial_state')
-      initial_state = layers.fully_connected(initial_state, 100)
+      initial_state = layers.fully_connected(initial_state, WORD_DIM * 2)
+      initial_state = layers.fully_connected(initial_state, WORD_DIM)
 
-      text_embeddings = multi_rnn(text_embeddings, layer_sizes, text_lengths,
-              dropout_keep_prob=dropout_keep_prob, attn_length=0,
-              initial_state=initial_state, base_cell=tf.contrib.rnn.BasicLSTMCell)
+      #text_embeddings = multi_rnn(text_embeddings, layer_sizes, text_lengths,
+      #        dropout_keep_prob=dropout_keep_prob, attn_length=0,
+      #        initial_state=initial_state, base_cell=tf.contrib.rnn.BasicLSTMCell)
+      text_embeddings = stack_bidirectional_dynamic_rnn(text_embeddings, layer_sizes,
+              text_lengths, initial_state=initial_state, attn_length=0,
+              dropout_keep_prob=dropout_keep_prob)
 
-      embeddings = tf.concat([embeddings, extra_embeddings],
+      embeddings = tf.concat([embeddings, text_embeddings, extra_embeddings],
           1, name='article_embeddings')
       softmax, logits = self.add_final_training_ops(
           embeddings,
@@ -363,8 +372,9 @@ class Model(object):
       tf.summary.scalar('loss', loss_op)
       tf.summary.histogram('histogram_loss', loss_op)
       for i in range(self.label_count):
-          tf.summary.scalar('recall%d' % i, recalls[i]['op'])
-          tf.summary.scalar('precision%d' % i, precisions[i]['op'])
+          label_name = self.labels[i]
+          tf.summary.scalar('recall_%s' % label_name, recalls[i]['op'])
+          tf.summary.scalar('precision_%s' % label_name, precisions[i]['op'])
 
     precision_updates = [x['updates'] for x in precisions]
     precision_ops = [x['op'] for x in precisions]

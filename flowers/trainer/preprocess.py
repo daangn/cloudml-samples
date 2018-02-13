@@ -90,7 +90,7 @@ from tensorflow.python.lib.io import file_io
 
 from trainer.model import BOTTLENECK_TENSOR_SIZE, WORD_DIM, MAX_TEXT_LENGTH
 from trainer.model import get_extra_embeddings, GraphReferences
-from trainer.emb import id_to_path
+from trainer.emb import id_to_path, ID_COL, LABEL_COL
 
 slim = tf.contrib.slim
 
@@ -140,16 +140,12 @@ class ExtractLabelIdsDoFn(beam.DoFn):
       return
 
     csv_rows_count.inc()
-    uri = row[0]
-    if not uri:
-      invalid_uri.inc()
-      return
 
     # In a real-world system, you may want to provide a default id for labels
     # that were not in the dictionary.  In this sample, we simply skip it.
     # This code already supports multi-label problems if you want to use it.
     label_ids = []
-    label = row[6]
+    label = row[LABEL_COL]
     try:
         label_ids.append(self.label_to_id_map[label.strip()])
     except KeyError:
@@ -180,7 +176,7 @@ class ReadImageAndConvertToJpegDoFn(beam.DoFn):
     except AttributeError:
       row, label_ids = element
 
-    id = int(row[0])
+    id = int(row[ID_COL])
     emb_filepath = "%s/%s" % (self._emb_path, id_to_path(id))
     if not file_io.file_exists(emb_filepath):
         emb_filepath = self._empty_emb_path
@@ -214,14 +210,15 @@ class ExtractTextDataDoFn(beam.DoFn):
     except AttributeError:
       item, label_ids, embedding = element
 
-    key = item[0]
-    category_id = item[1]
-    price = item[2]
-    images_count = item[3]
-    created_at_ts = item[4]
-    offerable = item[5]
+    key = item[1]
+    category_id = item[2]
+    price = item[3]
+    images_count = item[4]
+    created_at_ts = item[5]
+    offerable = item[6]
     recent_articles_count = item[7]
     blocks_inline = item[8]
+    text_embedding_inline = item[9]
 
     extra_embedding = self.sess.run(self.extra_embeddings, feed_dict={
           self.tensors.input_price: [price],
@@ -234,10 +231,10 @@ class ExtractTextDataDoFn(beam.DoFn):
           })[0]
 
     try:
-        text_embedding, text_length = self.get_embedding_and_length(item[9], MAX_TEXT_LENGTH)
+        text_embedding, text_length = self.get_embedding_and_length(text_embedding_inline, MAX_TEXT_LENGTH)
     except Exception as e:
         error_count.inc()
-        logging.error(item[9])
+        logging.error(text_embedding_inline)
         raise e
 
     yield item, label_ids, embedding, {
@@ -279,7 +276,7 @@ class TFExampleFromImageDoFn(beam.DoFn):
       pass
     row, label_ids, embedding, data = element
 
-    id = row[0]
+    id = row[ID_COL]
 
     example = tf.train.Example(features=tf.train.Features(feature={
         'image_uri': _bytes_feature([id]),
