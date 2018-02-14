@@ -419,6 +419,7 @@ class Model(object):
         'key': keys_placeholder,
         'image_embedding_bytes': tensors.input_image,
         'text_embedding': tensors.input_text,
+        'text_length': tensors.input_text_length,
         'category_id': tensors.input_category_id,
         'price': tensors.input_price,
         'images_count': tensors.input_images_count,
