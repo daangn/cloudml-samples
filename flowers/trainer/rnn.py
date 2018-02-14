@@ -44,18 +44,47 @@ def make_rnn_cell(rnn_layer_sizes,
     cells = make_rnn_cells(rnn_layer_sizes, dropout_keep_prob, attn_length, base_cell)
     return tf.contrib.rnn.MultiRNNCell(cells)
 
+def _add_conv_layers(inks, lengths, is_training=False, num_conv=[50, 50, 50], conv_len=[5, 5, 3], batch_norm=False, dropout=0.3):
+    """Adds convolution layers."""
+    convolved = inks
+    for i in range(len(num_conv)):
+      convolved_input = convolved
+      if batch_norm:
+        convolved_input = tf.layers.batch_normalization(
+            convolved_input,
+            training=(is_training))
+      # Add dropout layer if enabled and not first convolution layer.
+      if i > 0 and dropout and is_training:
+        convolved_input = tf.layers.dropout(
+            convolved_input,
+            rate=dropout,
+            training=(is_training))
+      convolved = tf.layers.conv1d(
+          convolved_input,
+          filters=num_conv[i],
+          kernel_size=conv_len[i],
+          activation=None,
+          strides=1,
+          padding="same",
+          name="conv1d_%d" % i)
+    return convolved, lengths
+
 def stack_bidirectional_dynamic_rnn(inputs, layer_sizes, sequence_length,
         initial_state=None, attn_length=0, dropout_keep_prob=1.0,
-        base_cell=tf.contrib.rnn.LSTMBlockCell):
+        base_cell=tf.contrib.rnn.BasicLSTMCell, is_training=False):
+    #inputs, sequence_length = _add_conv_layers(inputs, sequence_length, is_training, batch_norm=True)
     cells_fw = make_rnn_cells(layer_sizes, dropout_keep_prob=dropout_keep_prob,
           attn_length=attn_length, base_cell=base_cell)
     cells_bw = make_rnn_cells(layer_sizes, dropout_keep_prob=dropout_keep_prob,
           attn_length=attn_length, base_cell=base_cell)
 
     if initial_state is not None:
-        batch_size = inputs.shape[0]
-        initial_states_fw = [tf.contrib.rnn.LSTMStateTuple(tf.zeros([batch_size, size]), initial_state) for size in layer_sizes]
-        initial_states_bw = [tf.contrib.rnn.LSTMStateTuple(tf.zeros([batch_size, size]), initial_state) for size in layer_sizes]
+        batch_size = tf.shape(inputs)[0]
+        size = layer_sizes[0]
+        initial_states_fw = [tf.contrib.rnn.LSTMStateTuple(tf.zeros([batch_size, size]), initial_state)]
+        initial_states_bw = [tf.contrib.rnn.LSTMStateTuple(tf.zeros([batch_size, size]), initial_state)]
+        initial_states_fw += [tf.contrib.rnn.LSTMStateTuple(tf.zeros([batch_size, size]), tf.zeros([batch_size, size])) for size in layer_sizes[1:]]
+        initial_states_bw += [tf.contrib.rnn.LSTMStateTuple(tf.zeros([batch_size, size]), tf.zeros([batch_size, size])) for size in layer_sizes[1:]]
     else:
         initial_states_fw = initial_states_bw = None
 
@@ -64,9 +93,17 @@ def stack_bidirectional_dynamic_rnn(inputs, layer_sizes, sequence_length,
       initial_states_fw=initial_states_fw,
       initial_states_bw=initial_states_bw,
       dtype=tf.float32)
+
     output_state_fw = output_state_fw[-1]
     output_state_bw = output_state_bw[-1]
     return tf.concat([output_state_fw.h, output_state_bw.h], 1) # eval: 81, 500
+
+    mask = tf.tile(
+        tf.expand_dims(tf.sequence_mask(sequence_length, tf.shape(outputs)[1]), 2),
+        [1, 1, tf.shape(outputs)[2]])
+    zero_outside = tf.where(mask, outputs, tf.zeros_like(outputs))
+    outputs = tf.reduce_sum(zero_outside, axis=1)
+    return outputs
     #last_outputs = tf.concat([output_state_fw[-1].c, output_state_fw[-1].h, output_state_fw[-1].c, output_state_bw[-1].h], 1) # eval: 83, 1200
     #last_outputs = outputs[:, 0] # eval: 83, 1000
 

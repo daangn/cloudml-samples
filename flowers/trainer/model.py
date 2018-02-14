@@ -318,7 +318,7 @@ class Model(object):
 
       text_embeddings = tf.reshape(text_embeddings, [-1, MAX_TEXT_LENGTH, WORD_DIM])
       text_lengths = tf.reshape(text_lengths, [-1])
-      layer_sizes = [WORD_DIM]
+      layer_sizes = [WORD_DIM, WORD_DIM*2]
       initial_state = tf.concat([embeddings, extra_embeddings], 1, name='initial_state')
       initial_state = layers.fully_connected(initial_state, WORD_DIM * 2)
       initial_state = layers.fully_connected(initial_state, WORD_DIM)
@@ -328,7 +328,7 @@ class Model(object):
       #        initial_state=initial_state, base_cell=tf.contrib.rnn.BasicLSTMCell)
       text_embeddings = stack_bidirectional_dynamic_rnn(text_embeddings, layer_sizes,
               text_lengths, initial_state=initial_state, attn_length=0,
-              dropout_keep_prob=dropout_keep_prob)
+              dropout_keep_prob=dropout_keep_prob, is_training=is_training)
 
       embeddings = tf.concat([embeddings, text_embeddings, extra_embeddings],
           1, name='article_embeddings')
