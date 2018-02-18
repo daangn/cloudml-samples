@@ -127,6 +127,8 @@ class GraphReferences(object):
     self.input_recent_articles_count = None
     self.input_blocks_inline = None
     self.input_text_length = None
+    self.ids = None
+    self.labels = None
 
 def find_nearest_idx(array, value):
     return tf.argmin(tf.abs(
@@ -194,6 +196,9 @@ class Model(object):
     self.label_count = label_count
     self.dropout = dropout
     self.labels = file_io.read_file_to_string(labels_path).split('\n')
+
+  def id_to_key(self, id):
+      return self.labels[id]
 
   def add_final_training_ops(self,
                              embeddings,
@@ -297,7 +302,8 @@ class Model(object):
         }
         parsed = tf.parse_example(tensors.examples, features=feature_map)
         labels = tf.squeeze(parsed['label'])
-        uris = tf.squeeze(parsed['image_uri'])
+        tensors.labels = labels
+        tensors.ids = tf.squeeze(parsed['image_uri'])
         embeddings = parsed['embedding']
         text_embeddings = parsed['text_embedding']
         text_lengths = parsed['text_length']

@@ -120,9 +120,10 @@ class Evaluator(object):
 
       with file_io.FileIO(os.path.join(self.output_path,
                                        'predictions.csv'), 'w') as f:
-        to_run = [self.tensors.keys] + self.tensors.predictions
+        to_run = [self.tensors.ids, self.tensors.labels] + self.tensors.predictions
         self.sv.start_queue_runners(session)
         last_log_progress = 0
+        results = []
         for i in range(num_eval_batches):
           progress = i * 100 // num_eval_batches
           if progress > last_log_progress:
@@ -131,11 +132,17 @@ class Evaluator(object):
 
           res = session.run(to_run)
           for element in range(len(res[0])):
-            f.write('%s' % res[0][element])
-            for prediction in res[1:]:
-              f.write(',')
-              f.write(str(prediction[element]))
-            f.write('\n')
+              id = res[0][element]
+              label = res[1][element]
+              prediction = res[2][element]
+              score = res[3][element]
+              if label != prediction:
+                  results.append([id, self.model.id_to_key(label), round(score[label], 2),
+                      self.model.id_to_key(prediction), round(score[prediction], 2),
+                      round(score[label] - score[prediction], 2)])
+
+        for item in sorted(results, key=lambda x: x[-1]):
+            f.write('%s\n' % item)
 
 
 class Trainer(object):
@@ -361,11 +368,6 @@ def run(model, argv):
       help='If set, model is restored from latest checkpoint '
       'and predictions are written to a csv file and no training is performed.')
   parser.add_argument(
-      '--export_embeddings',
-      action='store_true',
-      default=False,
-      help='If set, model will be exported to ouput_dir.')
-  parser.add_argument(
       '--min_train_eval_rate',
       type=int,
       default=20,
@@ -442,8 +444,6 @@ def run(model, argv):
   cluster = tf.train.ClusterSpec(cluster_data) if cluster_data else None
   if args.write_predictions:
     write_predictions(args, model, cluster, task)
-  elif args.export_embeddings:
-    model.export_embeddings(model_dir(args.output_path))
   else:
     dispatch(args, model, cluster, task)
 
