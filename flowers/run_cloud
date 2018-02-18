@@ -2,4 +2,4 @@ RAILS_ROOT="$(pwd)/../../hoian-webapp/tmp/cache"
 docker run --rm -it --volumes-from gcloud-config \
          -v $(pwd):/app \
          --entrypoint /app/retrain_cloud \
-         daangn/cloud-ml:182 $@
+         daangn/cloud-ml:189 $@
