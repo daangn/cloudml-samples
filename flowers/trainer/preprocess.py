@@ -90,24 +90,22 @@ from tensorflow.python.lib.io import file_io
 
 from trainer.model import BOTTLENECK_TENSOR_SIZE, WORD_DIM, MAX_TEXT_LENGTH
 from trainer.model import get_extra_embeddings, GraphReferences
-from trainer.emb import id_to_path, ID_COL, LABEL_COL
+from trainer.emb import id_to_path, ID_COL, LABEL_COL, IMAGES_COUNT_COL
 
 slim = tf.contrib.slim
 
 error_count = Metrics.counter('main', 'errorCount')
 missing_label_count = Metrics.counter('main', 'missingLabelCount')
 csv_rows_count = Metrics.counter('main', 'csvRowsCount')
-labels_count = Metrics.counter('main', 'labelsCount')
-labels_without_ids = Metrics.counter('main', 'labelsWithoutIds')
-existing_file = Metrics.counter('main', 'existingFile')
-non_existing_file = Metrics.counter('main', 'nonExistingFile')
 skipped_empty_line = Metrics.counter('main', 'skippedEmptyLine')
-embedding_good = Metrics.counter('main', 'embedding_good')
-embedding_bad = Metrics.counter('main', 'embedding_bad')
-incompatible_image = Metrics.counter('main', 'incompatible_image')
-invalid_uri = Metrics.counter('main', 'invalid_file_name')
 unlabeled_image = Metrics.counter('main', 'unlabeled_image')
 unknown_label = Metrics.counter('main', 'unknown_label')
+empty_imgs_count = Metrics.counter('main', 'empty_imgs_count')
+no_texts_count = Metrics.counter('main', 'no_texts_count')
+empty_imgs_count = Metrics.counter('main', 'empty_imgs_count')
+labels_counters = []
+for i in range(30):
+    labels_counters.append(Metrics.counter('main', "LabelsCount%d" % i))
 
 
 class Default(object):
@@ -131,8 +129,7 @@ class ExtractLabelIdsDoFn(beam.DoFn):
     if not self.label_to_id_map:
       for i, label in enumerate(all_labels):
         label = label.strip()
-        if label:
-          self.label_to_id_map[label] = i
+        self.label_to_id_map[label] = i
 
     # Row format is: image_uri(,label_ids)*
     if not row:
@@ -147,11 +144,15 @@ class ExtractLabelIdsDoFn(beam.DoFn):
     label_ids = []
     label = row[LABEL_COL]
     try:
-        label_ids.append(self.label_to_id_map[label.strip()])
+        label_id = self.label_to_id_map[label.strip()]
+        label_ids.append(label_id)
+        labels_counters[label_id].inc()
+    except IndexError as e:
+        logging.error("total labels count: %d, invalid label_id: %d",
+                len(labels_counters), label_id)
+        raise e
     except KeyError:
         unknown_label.inc()
-
-    labels_count.inc(len(label_ids))
 
     if not label_ids:
       unlabeled_image.inc()
@@ -166,9 +167,8 @@ class ReadImageAndConvertToJpegDoFn(beam.DoFn):
   """
   SHAPE = [1, 1, 1, BOTTLENECK_TENSOR_SIZE]
 
-  def __init__(self, emb_path, empty_emb_path):
+  def __init__(self, emb_path):
     self._emb_path = emb_path
-    self._empty_emb_path = empty_emb_path
 
   def process(self, element):
     try:
@@ -177,19 +177,34 @@ class ReadImageAndConvertToJpegDoFn(beam.DoFn):
       row, label_ids = element
 
     id = int(row[ID_COL])
-    emb_filepath = "%s/%s" % (self._emb_path, id_to_path(id))
-    if not file_io.file_exists(emb_filepath):
-        emb_filepath = self._empty_emb_path
+    images_count = int(row[IMAGES_COUNT_COL])
 
+    if images_count < 1:
+        embedding = None
+    else:
+        emb_filepath = "%s/%s" % (self._emb_path, id_to_path(id))
+        if not file_io.file_exists(emb_filepath):
+            embedding = None
+            logging.warn('file is not exists: %s', emb_filepath)
+            empty_imgs_count.inc()
+        else:
+            embedding = self._fetch_embedding(emb_filepath)
+
+    yield row, label_ids, embedding
+
+  def _fetch_embedding(self, emb_filepath):
     try:
-      embedding = np.frombuffer(
-          file_io.read_file_to_string(emb_filepath),
-          dtype=np.float32)
-      embedding = embedding.reshape(self.SHAPE)
-      yield row, label_ids, embedding
+        embedding = np.frombuffer(
+                file_io.read_file_to_string(emb_filepath),
+                dtype=np.float32)
+        embedding = embedding.reshape(self.SHAPE)
     except ValueError as e:
-      logging.error('Could not load an embedding file from %s: %s', emb_filepath, str(e))
-      error_count.inc()
+        logging.warn('Could not load an embedding file from %s: %s', emb_filepath, str(e))
+        error_count.inc()
+        if e.message.startswith('cannot reshape array of size 0 into'):
+            file_io.delete_file(emb_filepath)
+            return
+        raise e
 
 
 class ExtractTextDataDoFn(beam.DoFn):
@@ -232,6 +247,9 @@ class ExtractTextDataDoFn(beam.DoFn):
 
     try:
         text_embedding, text_length = self.get_embedding_and_length(text_embedding_inline, MAX_TEXT_LENGTH)
+        if text_length < 1:
+            no_texts_count.inc()
+            logging.error('no text: %s', text_embedding_inline)
     except Exception as e:
         error_count.inc()
         logging.error(text_embedding_inline)
@@ -258,6 +276,8 @@ class ExtractTextDataDoFn(beam.DoFn):
 
 
 class TFExampleFromImageDoFn(beam.DoFn):
+  def __init__(self):
+    self._empty_embedding = [0.0] * BOTTLENECK_TENSOR_SIZE
 
   def process(self, element):
 
@@ -277,10 +297,14 @@ class TFExampleFromImageDoFn(beam.DoFn):
     row, label_ids, embedding, data = element
 
     id = row[ID_COL]
+    if embedding is None:
+        embedding = self._empty_embedding
+    else:
+        embedding = embedding.ravel().tolist()
 
     example = tf.train.Example(features=tf.train.Features(feature={
         'image_uri': _bytes_feature([id]),
-        'embedding': _float_feature(embedding.ravel().tolist()),
+        'embedding': _float_feature(embedding),
         'text_embedding': _float_feature(data['text_embedding']),
         'text_length': _int_feature([data['text_length']]),
         'extra_embedding': _float_feature(data['extra_embedding']),
@@ -300,13 +324,14 @@ def configure_pipeline(p, opt):
   read_label_source = beam.io.ReadFromText(
       opt.input_dict, strip_trailing_newlines=True)
   labels = (p | 'Read dictionary' >> read_label_source)
+
   _ = (p
        | 'Read input' >> read_input_source
        | 'Parse input' >> beam.Map(lambda line: csv.reader([line]).next())
        | 'Extract label ids' >> beam.ParDo(ExtractLabelIdsDoFn(),
                                            beam.pvalue.AsIter(labels))
        | 'Read and convert to JPEG'
-       >> beam.ParDo(ReadImageAndConvertToJpegDoFn(opt.emb_path, opt.empty_emb_path))
+       >> beam.ParDo(ReadImageAndConvertToJpegDoFn(opt.emb_path))
        | 'Extract text data' >> beam.ParDo(ExtractTextDataDoFn())
        | 'Embed and make TFExample' >> beam.ParDo(TFExampleFromImageDoFn())
        # TODO(b/35133536): Get rid of this Map and instead use
@@ -338,10 +363,6 @@ def default_args(argv):
   parser.add_argument(
       '--emb_path',
       default='data/image_embeddings',
-      help='')
-  parser.add_argument(
-      '--empty_emb_path',
-      default='data/empty.emb',
       help='')
   parser.add_argument(
       '--input_dict',
