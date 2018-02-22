@@ -113,6 +113,10 @@ class Evaluator(object):
         global_step=None,
         saver=self.saver)
 
+    import numpy as np
+    y_true = np.array([], dtype=np.int32)
+    y_pred = np.array([], dtype=np.int32)
+
     last_checkpoint = tf.train.latest_checkpoint(self.checkpoint_path)
     with self.sv.managed_session(
         master='', start_standard_services=False) as session:
@@ -131,18 +135,30 @@ class Evaluator(object):
             last_log_progress = progress
 
           res = session.run(to_run)
-          for element in range(len(res[0])):
-              id = res[0][element]
-              label = res[1][element]
-              prediction = res[2][element]
-              score = res[3][element]
+          ids, labels, predictions, scores = res
+          y_true = np.append(y_true, labels)
+          y_pred = np.append(y_pred, predictions)
+
+          for id, label, prediction, score in zip(ids, labels, predictions, scores):
               if label != prediction:
                   results.append([id, self.model.id_to_key(label), round(score[label], 2),
                       self.model.id_to_key(prediction), round(score[prediction], 2),
                       round(score[label] - score[prediction], 2)])
 
+        f.write('# article_id,label,label_score,predict,predict_score,bad_score\n')
         for item in sorted(results, key=lambda x: x[-1]):
-            f.write('%s\n' % item)
+            f.write('%s\n' % ','.join(map(str, item)))
+        print(f.name)
+
+    with file_io.FileIO(os.path.join(self.output_path, 'confusion_matrix.csv'), 'w') as f:
+        from sklearn.metrics import confusion_matrix
+        labels = self.model.get_labels()
+        f.write('# 라벨\예측,%s\n' % ','.join(labels))
+        m = confusion_matrix(y_true, y_pred)
+        print(m)
+        for i, row in enumerate(m):
+            f.write('%s,%s\n' % (labels[i], ','.join(map(str, row))))
+        print(f.name)
 
 
 class Trainer(object):

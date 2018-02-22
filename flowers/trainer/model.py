@@ -195,7 +195,10 @@ class Model(object):
   def __init__(self, label_count, dropout, labels_path):
     self.label_count = label_count
     self.dropout = dropout
-    self.labels = file_io.read_file_to_string(labels_path).split('\n')
+    self.labels = file_io.read_file_to_string(labels_path).strip().split('\n')
+
+  def get_labels(self):
+      return self.labels
 
   def id_to_key(self, id):
       return self.labels[id]

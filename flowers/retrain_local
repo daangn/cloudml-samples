@@ -77,6 +77,8 @@ elif [[ $CMD == 'train' ]] || [[ $CMD == 'train_test' ]]; then
 elif [[ $CMD == 'write_predict' ]]; then
   LABEL_COUNT=`wc -l < $DICT_FILE`
   DATA_PATHS="${GCS_PATH}/preproc/train*,${GCS_PATH}/preproc/eval*"
+  OUTPUT_ID=$(cat data/output_id_cloud)
+  DATA_COUNT=`wc -l < data/emb.csv`
 
   gcloud ml-engine local train \
     --module-name trainer.task \
@@ -84,8 +86,9 @@ elif [[ $CMD == 'write_predict' ]]; then
     -- \
     --write_predictions \
     --label_count $LABEL_COUNT \
-    --output_path "${GCS_PATH}/training" \
+    --output_path "${GCS_PATH}/training_${OUTPUT_ID}" \
     --eval_data_paths $DATA_PATHS \
+    --eval_set_size $DATA_COUNT \
     --input_dict "$DICT_FILE"
 
 elif [[ $CMD == 'predict' ]]; then
