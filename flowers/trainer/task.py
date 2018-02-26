@@ -156,6 +156,13 @@ class Evaluator(object):
         f.write('# 라벨\예측,%s\n' % ','.join(labels))
         m = confusion_matrix(y_true, y_pred)
         print(m)
+
+        recalls = [float(row[i]) / sum(row) if sum(row) else 0 for i, row in enumerate(m)]
+        precisions = [float(row[i]) / sum(row) if sum(row) else 0 for i, row in enumerate(m.T)]
+        print("%10s\trecall\tprecision" % 'label')
+        for label, recall, precision in zip(labels, recalls, precisions):
+            print("%10s\t%.2f\t%.2f" % (label, recall, precision))
+
         for i, row in enumerate(m):
             f.write('%s,%s\n' % (labels[i], ','.join(map(str, row))))
         print(f.name)
