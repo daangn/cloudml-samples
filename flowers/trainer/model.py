@@ -35,11 +35,10 @@ from rnn import stack_bidirectional_dynamic_rnn, simple_rnn, multi_rnn
 slim = tf.contrib.slim
 
 LOGITS_TENSOR_NAME = 'logits_tensor'
-IMAGE_URI_COLUMN = 'image_uri'
 LABEL_COLUMN = 'label'
 EMBEDDING_COLUMN = 'embedding'
 
-TOTAL_CATEGORIES_COUNT = 55
+TOTAL_CATEGORIES_COUNT = 57
 MAX_PRICE = 10000000.0
 MAX_IMAGES_COUNT = 10.0
 DAY_TIME = 60.0 * 60 * 24
@@ -54,7 +53,7 @@ MAX_TEXT_LENGTH = 256
 TEXT_EMBEDDING_SIZE = WORD_DIM * MAX_TEXT_LENGTH
 FEATURES_COUNT = 6
 BLOCKS_COUNT = 66
-EXTRA_EMBEDDING_SIZE = FEATURES_COUNT + TOTAL_CATEGORIES_COUNT + len(PRICE_SECTION) \
+EXTRA_EMBEDDING_SIZE = FEATURES_COUNT + len(PRICE_SECTION) \
     + len(IMAGE_COUNT_SECTION) + len(RECENT_ARTICLES_COUNT_SECTION) + BLOCKS_COUNT
 
 
@@ -140,7 +139,6 @@ def get_extra_embeddings(tensors):
     price_section = tf.constant(PRICE_SECTION, dtype=tf.float32)
     recent_articles_count_section = tf.constant(RECENT_ARTICLES_COUNT_SECTION, dtype=tf.float32)
 
-    tensors.input_category_id = tf.placeholder(tf.int32, shape=[None])
     tensors.input_price = tf.placeholder(tf.float32, shape=[None])
     tensors.input_images_count = tf.placeholder(tf.float32, shape=[None])
     tensors.input_created_at_ts = tf.placeholder(tf.float64, shape=[None])
@@ -148,7 +146,6 @@ def get_extra_embeddings(tensors):
     tensors.input_recent_articles_count = tf.placeholder(tf.float32, shape=[None])
     tensors.input_blocks_inline = tf.placeholder(tf.string, shape=[None])
 
-    category_id = tensors.input_category_id
     price = tensors.input_price
     images_count = tensors.input_images_count
     created_at_ts = tensors.input_created_at_ts
@@ -156,7 +153,6 @@ def get_extra_embeddings(tensors):
     recent_articles_count = tensors.input_recent_articles_count
     blocks = blocks_inline_to_matrix(tensors.input_blocks_inline)
 
-    category = tf.one_hot(category_id - 1, TOTAL_CATEGORIES_COUNT)
     price_section = tf.one_hot(find_nearest_idx(price_section, price), len(PRICE_SECTION))
     images_count_section = tf.one_hot(find_nearest_idx(images_count_section, images_count), len(IMAGE_COUNT_SECTION))
     recent_articles_count_section = tf.one_hot(find_nearest_idx(
@@ -170,7 +166,7 @@ def get_extra_embeddings(tensors):
 
     extra_embeddings = tf.concat([price_norm, is_free, images_count_norm, offerable, created_hour, day], 0)
     extra_embeddings = tf.reshape(extra_embeddings, [-1, FEATURES_COUNT])
-    extra_embeddings = tf.concat([extra_embeddings, category, price_section, images_count_section,
+    extra_embeddings = tf.concat([extra_embeddings, price_section, images_count_section,
         recent_articles_count_section, blocks], 1)
     return extra_embeddings
 
@@ -270,9 +266,11 @@ class Model(object):
       embeddings = inception_embeddings
       text_embeddings = tf.placeholder(tf.float32, shape=[None, TEXT_EMBEDDING_SIZE])
       text_lengths = tf.placeholder(tf.int64, shape=[None, 1])
+      category_ids = tf.placeholder(tf.int64, shape=[None, 1])
       tensors.input_image = inception_input
       tensors.input_text = text_embeddings
       tensors.input_text_length = text_lengths
+      tensors.input_category_id = category_ids
 
       extra_embeddings = get_extra_embeddings(tensors)
     else:
@@ -281,7 +279,7 @@ class Model(object):
       # Generate placeholders for examples.
       with tf.name_scope('inputs'):
         feature_map = {
-            'image_uri':
+            'id':
                 tf.FixedLenFeature(
                     shape=[], dtype=tf.string, default_value=['']),
             # Some images may have no labels. For those, we assume a default
@@ -302,15 +300,24 @@ class Model(object):
             'extra_embedding':
                 tf.FixedLenFeature(
                     shape=[EXTRA_EMBEDDING_SIZE], dtype=tf.float32),
+            'category_id':
+                tf.FixedLenFeature(shape=[1], dtype=tf.int64),
         }
         parsed = tf.parse_example(tensors.examples, features=feature_map)
         labels = tf.squeeze(parsed['label'])
         tensors.labels = labels
-        tensors.ids = tf.squeeze(parsed['image_uri'])
+        tensors.ids = tf.squeeze(parsed['id'])
         embeddings = parsed['embedding']
         text_embeddings = parsed['text_embedding']
         text_lengths = parsed['text_length']
         extra_embeddings = parsed['extra_embedding']
+        category_ids = parsed['category_id']
+
+    with tf.variable_scope("category_embeddings", reuse=tf.AUTO_REUSE):
+        category_embeddings = tf.get_variable('table', [TOTAL_CATEGORIES_COUNT, 5])
+        category_ids = tf.minimum(category_ids - 1, TOTAL_CATEGORIES_COUNT - 1)
+        category_ids = tf.reshape(category_ids, [-1])
+        category_embeddings = tf.nn.embedding_lookup(category_embeddings, category_ids)
 
     # We assume a default label, so the total number of labels is equal to
     # label_count+1.
@@ -324,11 +331,12 @@ class Model(object):
       if dropout_keep_prob:
           embeddings = tf.nn.dropout(embeddings, dropout_keep_prob)
           extra_embeddings = tf.nn.dropout(extra_embeddings, dropout_keep_prob)
+          category_embeddings = tf.nn.dropout(category_embeddings, dropout_keep_prob)
 
       text_embeddings = tf.reshape(text_embeddings, [-1, MAX_TEXT_LENGTH, WORD_DIM])
       text_lengths = tf.reshape(text_lengths, [-1])
       layer_sizes = [WORD_DIM, WORD_DIM*2]
-      initial_state = tf.concat([embeddings, extra_embeddings], 1, name='initial_state')
+      initial_state = tf.concat([embeddings, extra_embeddings, category_embeddings], 1, name='initial_state')
       initial_state = layers.fully_connected(initial_state, WORD_DIM * 2)
       initial_state = layers.fully_connected(initial_state, WORD_DIM)
 

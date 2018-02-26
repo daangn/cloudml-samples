@@ -88,7 +88,7 @@ from tensorflow.contrib.slim.python.slim.nets import inception_v3 as inception
 from tensorflow.python.framework import errors
 from tensorflow.python.lib.io import file_io
 
-from trainer.model import BOTTLENECK_TENSOR_SIZE, WORD_DIM, MAX_TEXT_LENGTH
+from trainer.model import BOTTLENECK_TENSOR_SIZE, WORD_DIM, MAX_TEXT_LENGTH, TOTAL_CATEGORIES_COUNT
 from trainer.model import get_extra_embeddings, GraphReferences
 from trainer.emb import id_to_path, ID_COL, LABEL_COL, IMAGES_COUNT_COL
 
@@ -226,7 +226,6 @@ class ExtractTextDataDoFn(beam.DoFn):
       item, label_ids, embedding = element
 
     key = item[1]
-    category_id = item[2]
     price = item[3]
     images_count = item[4]
     created_at_ts = item[5]
@@ -240,7 +239,6 @@ class ExtractTextDataDoFn(beam.DoFn):
           self.tensors.input_images_count: [images_count],
           self.tensors.input_offerable: [offerable],
           self.tensors.input_created_at_ts: [created_at_ts],
-          self.tensors.input_category_id: [category_id],
           self.tensors.input_recent_articles_count: [recent_articles_count],
           self.tensors.input_blocks_inline: [blocks_inline],
           })[0]
@@ -297,22 +295,25 @@ class TFExampleFromImageDoFn(beam.DoFn):
     row, label_ids, embedding, data = element
 
     id = row[ID_COL]
+    category_id = int(row[2])
+    if category_id < 1 or category_id - 1 > TOTAL_CATEGORIES_COUNT:
+        error_count.inc()
+        raise 'invalid catgory_id: %d' % category_id
+
     if embedding is None:
         embedding = self._empty_embedding
     else:
         embedding = embedding.ravel().tolist()
 
     example = tf.train.Example(features=tf.train.Features(feature={
-        'image_uri': _bytes_feature([id]),
+        'id': _bytes_feature([id]),
         'embedding': _float_feature(embedding),
         'text_embedding': _float_feature(data['text_embedding']),
         'text_length': _int_feature([data['text_length']]),
         'extra_embedding': _float_feature(data['extra_embedding']),
+        'category_id': _int_feature([category_id]),
+        'label': _int_feature(label_ids),
     }))
-
-    if label_ids:
-      label_ids.sort()
-      example.features.feature['label'].int64_list.value.extend(label_ids)
 
     yield example
 

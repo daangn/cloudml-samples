@@ -1,4 +1,6 @@
 #!/bin/bash
+set -e
+
 declare -r CMD=$1
 declare -r MODEL_NAME=article_classifier
 
