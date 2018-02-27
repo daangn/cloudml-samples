@@ -143,14 +143,24 @@ elif [[ $CMD == 'write_predict' ]]; then
 elif [[ $CMD == 'publish' ]]; then
   echo "Publish the trained model."
 
-  declare -r VERSION_NAME=$2
+  VERSION_NAME=$2
+  if [[ -z $VERSION_NAME ]]; then
+    VERSION_NAME="v$(date +%Y%m%d_%H%M%S)"
+  fi
   echo "Version: " $VERSION_NAME
   echo $VERSION_NAME > data/version_cloud
+  OUTPUT_ID=$(cat data/output_id_cloud)
 
   gcloud ml-engine versions create "$VERSION_NAME" \
     --model "$MODEL_NAME" \
     --staging-bucket "$BUCKET" \
     --runtime-version=1.4 \
-    --origin "${GCS_PATH}/training/model"
+    --origin "${GCS_PATH}/training_${OUTPUT_ID}/model"
+
+elif [[ $CMD == 'all' ]]; then
+  ./retrain_cloud gen
+  ./retrain_cloud pre
+  ./retrain_cloud train_test
+  ./retrain_cloud write_predict
 
 fi

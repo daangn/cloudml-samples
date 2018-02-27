@@ -123,7 +123,7 @@ class Evaluator(object):
       self.sv.saver.restore(session, last_checkpoint)
 
       with file_io.FileIO(os.path.join(self.output_path,
-                                       'predictions.csv'), 'w') as f:
+                                       'wrong_predictions.csv'), 'w') as f:
         to_run = [self.tensors.ids, self.tensors.labels] + self.tensors.predictions
         self.sv.start_queue_runners(session)
         last_log_progress = 0
